@@ -139,7 +139,7 @@ ships unless someone other than its author tried to break it.
 
 | | claude-debate | Ruflo (`ruflo-core` plugin, checked 2026-09-23) |
 |---|---|---|
-| What it enforces | a debate record per commit before any PR | orchestration, no PR gate |
+| Focus | a debate record per commit before any PR | multi-agent orchestration platform |
 | MCP server | none | registers one with 300+ tools |
 | Runtime downloads | none; ~500 lines of Node and bash | hooks and MCP fall back to `npx …@latest` |
 | Hooks | one `PreToolUse`, inert without `.claude/debate.json` | on every Bash, Edit, compaction and stop |
