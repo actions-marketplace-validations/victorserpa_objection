@@ -312,6 +312,24 @@ change the flags the reviewer is run with.
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
+No Anthropic account? `runner: gemini` runs the same accuser through the
+Gemini CLI (pinned with `gemini-version`), with a Gemini API key, which
+has a free tier. `gemini-model` picks the model; empty uses the CLI's
+default. It was run live through `ci-review.sh` on a planted bug (caught
+as BLOCKER, check failed), not yet on a GitHub runner. One difference
+from the claude runner, which gets no tools: the Gemini CLI keeps the
+read-only tools of its plan mode (file reads, confined to an empty
+directory, and web search). It has no shell, so it cannot read the key
+from its environment.
+
+```yaml
+      - uses: victorserpa/objection@v1
+        with:
+          review: true
+          runner: gemini
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+```
+
 It is a barrier only when the agent cannot get around it: the token the
 agent uses must not be able to bypass the ruleset or push to the base
 branch (where this workflow lives). For a solo admin whose agent uses
