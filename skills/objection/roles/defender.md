@@ -32,6 +32,11 @@ or behind a disabled flag defends nothing.
 propose the new severity with the reason. Lowering severity is not
 refuting.
 
+**Read only what a verdict needs:** the cited lines and the code that
+could defend them. You get findings, not the whole diff; open the diff
+only when a finding depends on it.
+
 Never run commands that change state (database, queues, git, files). Do
-not edit anything. Report as a table: finding, verdict, evidence
-(`file:line`), one sentence.
+not edit anything. **Report format, and nothing else:** one table, one
+row per finding (# | verdict | evidence file:line | one sentence). No
+preamble, no summary.

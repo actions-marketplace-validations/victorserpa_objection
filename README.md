@@ -185,8 +185,15 @@ it runs them in one session and says so in the record.
   the record is public in the PR body.
 - `curl` against the GitHub API with a token from `gh auth token` is not
   blocked by the local hook (the GitHub check still catches the PR).
-- It costs two to five reviewer runs per round, once per PR. A small PR
-  makes a short debate.
+- It is not free. It is built to stay cheap:
+  - a small diff (up to 80 changed lines) gets **one** accuser, and the
+    defender only runs if something serious was found;
+  - roles get a trimmed diff (no lockfiles, snapshots, build output, 5
+    lines of context), read beyond it only to chase a suspicion, and
+    answer in a fixed table capped at 15 rows;
+  - later rounds see only the fix diff;
+  - `"budget": "lean"` in `.objection.json` cuts it to one accuser per
+    round; the gate hook runs outside the model and costs no tokens.
 
 ## How it compares to Ruflo
 

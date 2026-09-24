@@ -30,4 +30,12 @@ rework cycle just like a missed one. Say what you could NOT evaluate
 (code you could not read, runtime behavior, external services). A short
 honest review beats a long one that skipped the main path.
 
-Do not edit anything. Report as a table, most severe first.
+**Spend reading where the risk is.** Start from the diff you were given.
+Open a file beyond it only to follow a specific suspicion, and read the
+function you need, not the whole file. No repository-wide scans.
+
+Do not edit anything. **Report format, and nothing else:** one table,
+most severe first, one row per finding (severity | file:line | defect in
+one sentence | proof path in one sentence), at most 15 rows; then at most
+three lines on what you could not evaluate. Do not restate the code, do
+not summarize the diff, do not list what is fine.

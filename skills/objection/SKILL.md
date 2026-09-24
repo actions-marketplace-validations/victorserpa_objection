@@ -52,6 +52,8 @@ only what you cannot read from the repository:
   project already defines for your tool (subagent, custom agent, or a
   prompt file path); `focus` goes into its prompt. The generic accuser
   always runs on code, so this list can start empty.
+- `budget` (optional): `lean`, `standard` (default) or `thorough`. See
+  "Token budget".
 
 Then install a gate, and tell the user which one you installed:
 
@@ -92,11 +94,44 @@ code that does not pass.
    skip steps 1 to 3. The record says "documentation only", without the
    debate sections, and goes straight to the stamp.
 
+## Token budget
+
+The debate must cost less than the rework it prevents. Every run obeys
+these, whatever the budget:
+
+- **The review diff**, the only code a role gets up front, excludes noise
+  and keeps little context. With `X` standing for
+  `-- . ':!*.lock' ':!*lock.json' ':!*lock.yaml' ':!*.snap' ':!*.min.*' ':!dist/**' ':!build/**' ':!**/generated/**'`:
+  - size first, never with `-U` (it would print the whole patch):
+    `git diff --shortstat origin/<base>...HEAD X`
+  - then the diff itself: `git diff -U5 origin/<base>...HEAD X`
+- **Size decides the cast** (insertions plus deletions from `--shortstat`):
+
+  | review diff | accusers | defender |
+  |---|---|---|
+  | docs only | none (step 0.4) | none |
+  | up to 80 lines, no `reviewers` match | generic accuser only | only if a finding is BLOCKER or HIGH |
+  | normal | generic + matching `reviewers` | once, if any finding is MEDIUM or above |
+  | over 800 lines | same, but tell the user the size and suggest splitting the PR before spending | same |
+
+- **`budget: lean`**: one accuser total (matching `reviewers`' `focus`
+  lines are folded into the generic accuser's prompt), defender only for
+  BLOCKER or HIGH. **`budget: thorough`**: every matching reviewer, and
+  the defender sees LOW findings too.
+- **No findings, no defense.** Zero MEDIUM-or-above findings skips step 2.
+- **Roles report in their fixed table format** (see the role files) and
+  read beyond the diff only to chase a specific suspicion.
+- **Later rounds** debate only the fix diff, with only the accusers of
+  the area touched, and the defender sees only the new findings.
+- **Nothing else is loaded.** Do not paste whole files, prior rounds or
+  your own reasoning into a role's prompt: diff, goal in one sentence,
+  and for the defender the numbered findings.
+
 ## 1. Accusation
 
-`git diff --name-only origin/<base>...HEAD` decides who accuses:
+The cast comes from "Token budget" above. By default:
 
-- the generic accuser (`roles/accuser.md`) on the whole code diff, always;
+- the generic accuser (`roles/accuser.md`) on the review diff;
 - each `reviewers` entry whose `paths` matches a changed file, with its
   `focus`.
 
@@ -114,8 +149,8 @@ code that does not pass.
    again. Say in the record that the roles ran in one context; it is a
    weaker debate and the reader should know.
 
-Give each accuser its diff (`git diff origin/<base>...HEAD -- <its
-files>`) and the goal of the change in one sentence.
+Give each accuser the review diff restricted to its files and the goal
+of the change in one sentence.
 
 **Rules that go into every accuser's prompt:**
 
@@ -129,10 +164,10 @@ files>`) and the goal of the change in one sentence.
 
 ## 2. Defense
 
-The defender (`roles/defender.md`) receives **all** BLOCKER, HIGH and
-MEDIUM findings, numbered, with the proof each accuser gave. LOW goes
-straight to the record, without defense. Same preference order for how
-to run it.
+The defender (`roles/defender.md`) receives the findings the budget
+sends it (by default all BLOCKER, HIGH and MEDIUM), numbered, with the
+proof each accuser gave, and not the diff. LOW goes straight to the
+record, without defense. Same preference order for how to run it.
 
 ## 3. Judge: this session, never a smaller model
 
@@ -196,6 +231,8 @@ commits and replace the record in the body.
 
 ## Cost
 
-Two to five reviewer runs per round. Worth it per PR, not per commit. A
-three-line change makes a three-line PR, and the debate comes out short
-because there is little to accuse.
+Per PR, not per commit. A small PR gets one accuser and usually no
+defender; a normal one gets one to three accusers and one defender; the
+gate hook itself runs outside the model and costs no tokens. When a
+round would be expensive (over 800 changed lines), say so before
+spending, and prefer splitting the PR.
