@@ -1,6 +1,6 @@
 ---
 name: defender
-description: Defense in /debate. Receives the accusers' findings and tries to refute each one with evidence from the code, returning UPHELD, REFUTED or CANNOT VERIFY. Use only inside /debate, after the accusation. Not for reviewing a diff from scratch; that is the accuser.
+description: Defense in /objection. Receives the accusers' findings and tries to refute each one with evidence from the code, returning UPHELD, REFUTED or CANNOT VERIFY. Use only inside /objection, after the accusation. Not for reviewing a diff from scratch; that is the accuser.
 model: opus
 tools: Read, Grep, Glob, Bash
 ---

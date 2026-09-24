@@ -1,6 +1,10 @@
-# claude-debate
+# objection
 
-**Adversarial review for Claude Code. Every PR is debated before it exists.**
+> **OBJECTION!** Your PR goes on trial before it ships.
+
+Adversarial review for Claude Code: accusers attack the diff, a defender
+refutes them with evidence, a judge rules, and a hook keeps the PR from
+existing until the verdict is APPROVED.
 
 When you ask an AI to build something, it plans, writes, checks, and
 approves its own work. It is the same mind grading its own exam. This
@@ -55,17 +59,17 @@ the model invent the third one. The accusers are asked what they could
 In Claude Code:
 
 ```
-/plugin marketplace add victorserpa/claude-debate
-/plugin install debate@claude-debate
+/plugin marketplace add victorserpa/objection
+/plugin install objection@objection
 ```
 
 Then, in each repository you want to protect:
 
 ```
-/debate init
+/objection init
 ```
 
-This creates `.claude/debate.json`. **Nothing is enforced in a repository
+This creates `.claude/objection.json`. **Nothing is enforced in a repository
 without that file**, so installing the plugin never blocks work in
 repositories you did not opt in.
 
@@ -92,8 +96,8 @@ Requirements: `node`, `git`, and the `gh` CLI.
 
 ## Use
 
-When a branch is ready: `/debate`. When Claude tries to open a PR without
-one, the hook blocks it and tells it to run `/debate`.
+When a branch is ready: `/objection`. When Claude tries to open a PR without
+one, the hook blocks it and tells it to run `/objection`.
 
 A human can always bypass the gate by running `gh` in their own terminal.
 The hook binds the agent, not you.
@@ -118,7 +122,7 @@ heredoc bodies).
 12 ways around the first (bash) version, including a record ending in
 `REJECTED` that quoted `APPROVED` and still passed. Round two, with the
 defender, found 10 more. Every one is a regression case in
-[`test/require-debate.test.sh`](test/require-debate.test.sh).
+[`test/require-objection.test.sh`](test/require-objection.test.sh).
 
 ## Honest limits
 
@@ -137,30 +141,30 @@ multi-agent orchestration platform. If you want swarms, vector memory, and
 100+ agents, look there. This plugin does one thing: make sure no PR
 ships unless someone other than its author tried to break it.
 
-| | claude-debate | Ruflo (`ruflo-core` plugin, checked 2026-09-23) |
+| | objection | Ruflo (`ruflo-core` plugin, checked 2026-09-23) |
 |---|---|---|
 | Focus | a debate record per commit before any PR | multi-agent orchestration platform |
 | MCP server | none | registers one with 300+ tools |
 | Runtime downloads | none; ~500 lines of Node and bash | hooks and MCP fall back to `npx …@latest` |
-| Hooks | one `PreToolUse`, inert without `.claude/debate.json` | on every Bash, Edit, compaction and stop |
+| Hooks | one `PreToolUse`, inert without `.claude/objection.json` | on every Bash, Edit, compaction and stop |
 | Agents | 2 (accuser, defender) + yours | 100+ |
 
 ## Layout
 
 ```
 .claude-plugin/marketplace.json
-plugins/debate/
+plugins/objection/
   .claude-plugin/plugin.json
   agents/accuser.md          prosecution
   agents/defender.md         defense
   hooks/hooks.json
-  hooks/require-debate.mjs   the gate
-  skills/debate/SKILL.md     the procedure
-  skills/debate/stamp.sh     validates and stores the record
-test/require-debate.test.sh
+  hooks/require-objection.mjs   the gate
+  skills/objection/SKILL.md     the procedure
+  skills/objection/stamp.sh     validates and stores the record
+test/require-objection.test.sh
 ```
 
-Run the tests with `bash test/require-debate.test.sh`.
+Run the tests with `bash test/require-objection.test.sh`.
 
 ## License
 

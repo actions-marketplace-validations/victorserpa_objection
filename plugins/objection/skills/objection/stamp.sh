@@ -1,19 +1,19 @@
 #!/bin/bash
-# Registers a /debate record for the current HEAD, where the
-# require-debate.mjs hook looks for it.
+# Registers a /objection record for the current HEAD, where the
+# require-objection.mjs hook looks for it.
 #
 # Usage: stamp.sh <record.md> <base>     (base: origin/<branch the PR targets>)
 #
 # Refuses the record when:
 # - there are uncommitted tracked changes: the record describes HEAD, and
 #   code outside the commit was not debated;
-# - the base is not one of the PR targets in .claude/debate.json;
+# - the base is not one of the PR targets in .claude/objection.json;
 # - a required section or the verdict line is missing;
 # - the verdict is APPROVED but "## Open" still lists a BLOCKER or HIGH
 #   finding.
 #
 # The first line it writes is a stamp with the SHA and the base. The hook
-# only accepts stamped records, so a file dropped into .git/debate/ by hand
+# only accepts stamped records, so a file dropped into .git/objection/ by hand
 # does not count. Nothing stops someone from stamping a made-up record: the
 # rule that the record comes out of the debate, not out of whoever wrote the
 # code, lives in SKILL.md. This is a process guard, not a security boundary.
@@ -30,8 +30,8 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
 fi
 
 top=$(git rev-parse --show-toplevel)
-config="$top/.claude/debate.json"
-[ -f "$config" ] || { echo "no $config: this repository has not opted in to /debate." >&2; exit 1; }
+config="$top/.claude/objection.json"
+[ -f "$config" ] || { echo "no $config: this repository has not opted in to /objection." >&2; exit 1; }
 
 # Only real PR targets. An arbitrary base (HEAD~1) would let a docs-only
 # commit on top of undebated code fall into the documentation exemption.
@@ -90,8 +90,8 @@ if [ "$verdict" = 'VERDICT: APPROVED' ] && [ "$docs_only" = no ]; then
 fi
 
 sha=$(git rev-parse HEAD)
-dest="$(git rev-parse --path-format=absolute --git-common-dir)/debate"
+dest="$(git rev-parse --path-format=absolute --git-common-dir)/objection"
 mkdir -p "$dest"
-{ printf '<!-- debate: sha=%s base=%s -->\n' "$sha" "$base"; cat "$record"; } >"$dest/$sha.md"
+{ printf '<!-- objection: sha=%s base=%s -->\n' "$sha" "$base"; cat "$record"; } >"$dest/$sha.md"
 echo "record stored for ${sha:0:7}: $dest/$sha.md"
 echo "$verdict"

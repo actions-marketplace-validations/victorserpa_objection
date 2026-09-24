@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 // PreToolUse hook: blocks creating, marking ready, and merging a pull
-// request unless an APPROVED /debate record exists for the exact commit
+// request unless an APPROVED /objection record exists for the exact commit
 // going into the PR. Also blocks the shortcuts that would skip the record:
 // `gh api` writing to /pulls, GraphQL PR mutations, auto-merge, and MCP
 // tools that create or merge PRs.
 //
 // Opt-in per repository: nothing is enforced unless the repository the
-// session runs in has `.claude/debate.json`.
+// session runs in has `.claude/objection.json`.
 //
 // The record is per commit, not per branch. It lives at
-// `<git-common-dir>/debate/<sha>.md` and is only valid for that SHA: a new
+// `<git-common-dir>/objection/<sha>.md` and is only valid for that SHA: a new
 // commit after the debate invalidates it. `ready` and `merge` check the PR
 // head SHA on GitHub, not the local copy.
 //
@@ -20,7 +20,7 @@
 // the defender, found 10 more (multi-line GraphQL, a hung `gh`, `gh pr -R`,
 // a shell reading stdin, disguised command names, ambiguous directories,
 // xargs, MCP names, arbitrary stamp base, hand-written records). Every one
-// of them is a case in test/require-debate.test.sh.
+// of them is a case in test/require-objection.test.sh.
 //
 // Fails closed when the command is about a PR: if it cannot verify (gh
 // offline, PR not found), it blocks and says why. A human bypasses it by
@@ -31,11 +31,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
 const HINT =
-  "Run /debate until the record says APPROVED for this commit. A human can bypass this by running the command in their own terminal.";
+  "Run /objection until the record says APPROVED for this commit. A human can bypass this by running the command in their own terminal.";
 
 function block(reason, withHint = true) {
-  process.stderr.write(`[debate] Blocked: ${reason}\n`);
-  if (withHint) process.stderr.write(`[debate] ${HINT}\n`);
+  process.stderr.write(`[objection] Blocked: ${reason}\n`);
+  if (withHint) process.stderr.write(`[objection] ${HINT}\n`);
   process.exit(2);
 }
 
@@ -79,7 +79,7 @@ function loadConfig(dir) {
   } catch {
     return null;
   }
-  const file = join(top, ".claude", "debate.json");
+  const file = join(top, ".claude", "objection.json");
   if (!existsSync(file)) return null;
   try {
     return JSON.parse(readFileSync(file, "utf8"));
@@ -112,7 +112,7 @@ if (tool.startsWith("mcp__")) {
     )
   )
     block(
-      `${tool} creates, changes or merges a PR without a debate record. Use gh pr create / gh pr ready / gh pr merge after /debate.`,
+      `${tool} creates, changes or merges a PR without a debate record. Use gh pr create / gh pr ready / gh pr merge after /objection.`,
       false,
     );
   process.exit(0);
@@ -189,7 +189,7 @@ if (reGhApi.test(command) && /\bgraphql\b/.test(command)) {
     ) ||
     /\s(-F|--field)[\s=]+query=@|\s--input[\s=]/.test(command)
   )
-    block("a GraphQL PR mutation (or a query read from a file) skips the debate record. Use gh pr create / gh pr merge after /debate.", false);
+    block("a GraphQL PR mutation (or a query read from a file) skips the debate record. Use gh pr create / gh pr merge after /objection.", false);
 }
 for (const segment of noDocs.split(/\n|;|&&|\|\|?/)) {
   if (!reGhApi.test(segment)) continue;
@@ -199,7 +199,7 @@ for (const segment of noDocs.split(/\n|;|&&|\|\|?/)) {
     /(-X|--method)\s*=?\s*(POST|PUT)\b/i.test(segment) ||
     /\s(-f|-F|--field|--raw-field|--input)[\s=]/.test(segment);
   if (pullsTarget && write && !read)
-    block("gh api writing to /pulls skips the debate record. Use gh pr create / gh pr merge after /debate.", false);
+    block("gh api writing to /pulls skips the debate record. Use gh pr create / gh pr merge after /objection.", false);
 }
 
 // --- gh pr <action> ----------------------------------------------------------
@@ -312,17 +312,17 @@ function fromPr(dir, repo, target) {
 // The record counts by its LAST verdict line, the same one stamp.sh reads.
 // It also needs the stamp that only stamp.sh writes on the first line, with
 // the SHA and the base the diff was debated against: a file written by hand
-// into `.git/debate/` does not count, and a record debated against one base
+// into `.git/objection/` does not count, and a record debated against one base
 // does not release a PR to another base (different diff, different accusers).
 function approved(common, sha, prBase) {
-  const file = join(common, "debate", `${sha}.md`);
-  if (!existsSync(file)) return `no /debate record for commit ${sha.slice(0, 7)}.`;
+  const file = join(common, "objection", `${sha}.md`);
+  if (!existsSync(file)) return `no /objection record for commit ${sha.slice(0, 7)}.`;
   const text = readFileSync(file, "utf8");
-  const stamp = /^<!-- debate: sha=([0-9a-f]{40}) base=(\S+) -->$/m.exec(text.split("\n")[0] || "");
+  const stamp = /^<!-- objection: sha=([0-9a-f]{40}) base=(\S+) -->$/m.exec(text.split("\n")[0] || "");
   if (!stamp || stamp[1] !== sha)
     return `the record for ${sha.slice(0, 7)} was not written by stamp.sh (${file}).`;
   if (prBase && stamp[2] !== `origin/${prBase}`)
-    return `the record for ${sha.slice(0, 7)} was debated against ${stamp[2]}, but the PR targets ${prBase}. Run /debate against origin/${prBase}.`;
+    return `the record for ${sha.slice(0, 7)} was debated against ${stamp[2]}, but the PR targets ${prBase}. Run /objection against origin/${prBase}.`;
   const verdicts = text.split("\n").filter((l) => /^VERDICT: /.test(l));
   if (verdicts.at(-1) !== "VERDICT: APPROVED")
     return `the record for ${sha.slice(0, 7)} is not APPROVED (${file}).`;

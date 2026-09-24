@@ -1,26 +1,26 @@
 #!/bin/bash
-# Cases for require-debate.mjs and stamp.sh, including every bypass the
-# hook's own two debate rounds found. Run: bash test/require-debate.test.sh
+# Cases for require-objection.mjs and stamp.sh, including every bypass the
+# hook's own two debate rounds found. Run: bash test/require-objection.test.sh
 #
 # Uses temporary repositories and a fake `gh` on PATH (answers
 # "$STUB_SHA $STUB_BASE" to `gh pr view`), so it never talks to GitHub.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK="$ROOT/plugins/debate/hooks/require-debate.mjs"
-STAMP="$ROOT/plugins/debate/skills/debate/stamp.sh"
+HOOK="$ROOT/plugins/objection/hooks/require-objection.mjs"
+STAMP="$ROOT/plugins/objection/skills/objection/stamp.sh"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 
 gitc() { git -c user.email=t@t -c user.name=t "$@"; }
-optin() { mkdir -p "$1/.claude" && printf '{"bases":["develop","master"],"defaultBase":"master"}\n' >"$1/.claude/debate.json"; }
+optin() { mkdir -p "$1/.claude" && printf '{"bases":["develop","master"],"defaultBase":"master"}\n' >"$1/.claude/objection.json"; }
 
 git init -q "$T/ok" && optin "$T/ok" && gitc -C "$T/ok" add . && gitc -C "$T/ok" commit -q -m a
 git init -q "$T/no" && optin "$T/no" && gitc -C "$T/no" add . && gitc -C "$T/no" commit -q -m b
 git init -q "$T/off" && gitc -C "$T/off" commit -q --allow-empty -m c
 OK_SHA=$(git -C "$T/ok" rev-parse HEAD)
-mkdir -p "$T/ok/.git/debate"
-stamp="<!-- debate: sha=$OK_SHA base=origin/develop -->"
-printf '%s\n# x\nVERDICT: APPROVED\n' "$stamp" >"$T/ok/.git/debate/$OK_SHA.md"
+mkdir -p "$T/ok/.git/objection"
+stamp="<!-- objection: sha=$OK_SHA base=origin/develop -->"
+printf '%s\n# x\nVERDICT: APPROVED\n' "$stamp" >"$T/ok/.git/objection/$OK_SHA.md"
 
 mkdir "$T/bin"
 cat >"$T/bin/gh" <<'EOF'
@@ -44,7 +44,7 @@ check() { # expected cwd tool command
 }
 O="$T/ok"; N="$T/no"; F="$T/off"
 
-# Repository without .claude/debate.json: nothing is enforced.
+# Repository without .claude/objection.json: nothing is enforced.
 check 0 $F Bash 'gh pr create --fill'
 check 0 $F Bash 'gh pr merge 5 --auto'
 check 0 $F mcp__github__create_pull_request ''
@@ -162,11 +162,11 @@ check 2 $N mcp__x__mark_pr_ready_for_review ''
 check 0 $N mcp__github__create_pull_request_review ''
 check 0 $N mcp__github__create_pr_comment ''
 # A record without the stamp from stamp.sh does not count.
-printf '# x\nVERDICT: APPROVED\n' >"$T/ok/.git/debate/$OK_SHA.md"
+printf '# x\nVERDICT: APPROVED\n' >"$T/ok/.git/objection/$OK_SHA.md"
 check 2 $O Bash 'gh pr create --fill --base develop'
-printf '<!-- debate: sha=%s base=origin/develop -->\n# x\nVERDICT: APPROVED\n' "$(printf 'a%.0s' $(seq 40))" >"$T/ok/.git/debate/$OK_SHA.md"
+printf '<!-- objection: sha=%s base=origin/develop -->\n# x\nVERDICT: APPROVED\n' "$(printf 'a%.0s' $(seq 40))" >"$T/ok/.git/objection/$OK_SHA.md"
 check 2 $O Bash 'gh pr create --fill --base develop'
-printf '%s\n# x\nVERDICT: APPROVED\n' "$stamp" >"$T/ok/.git/debate/$OK_SHA.md"
+printf '%s\n# x\nVERDICT: APPROVED\n' "$stamp" >"$T/ok/.git/objection/$OK_SHA.md"
 # Help and disabling auto-merge touch no PR.
 export STUB_SHA=deadbeef
 check 0 $N Bash 'gh pr create --help'
@@ -192,7 +192,7 @@ stampcheck 1 HEAD~1 "$T/min.md"
 stampcheck 1 origin/develop "$T/min.md"
 full '- MEDIUM: no test for case X yet'
 stampcheck 0 origin/develop "$T/rec.md"
-head -1 "$R/.git/debate/$(git -C "$R" rev-parse HEAD).md" | grep -q "^<!-- debate: sha=$(git -C "$R" rev-parse HEAD) base=origin/develop -->$" \
+head -1 "$R/.git/objection/$(git -C "$R" rev-parse HEAD).md" | grep -q "^<!-- objection: sha=$(git -C "$R" rev-parse HEAD) base=origin/develop -->$" \
   || { echo "FAIL: stamp.sh did not write the stamp"; failures=$((failures + 1)); }
 full 'HIGH: no list marker'
 stampcheck 1 origin/develop "$T/rec.md"
@@ -206,10 +206,10 @@ git -C "$R" add .claude && gitc -C "$R" commit -q -m prompt
 git -C "$R" update-ref refs/remotes/origin/develop HEAD~1
 stampcheck 1 origin/develop "$T/min.md"
 # Repository not opted in: stamp.sh refuses.
-(cd "$F" && bash "$STAMP" "$T/rec.md" origin/main >/dev/null 2>&1) && { echo "FAIL: stamp.sh ran without debate.json"; failures=$((failures + 1)); }
+(cd "$F" && bash "$STAMP" "$T/rec.md" origin/main >/dev/null 2>&1) && { echo "FAIL: stamp.sh ran without objection.json"; failures=$((failures + 1)); }
 
 # A record quoting APPROVED but ending REJECTED: blocked.
-printf '%s\n# x\nexample: VERDICT: APPROVED\nVERDICT: APPROVED\nVERDICT: REJECTED\n' "$stamp" >"$T/ok/.git/debate/$OK_SHA.md"
+printf '%s\n# x\nexample: VERDICT: APPROVED\nVERDICT: APPROVED\nVERDICT: REJECTED\n' "$stamp" >"$T/ok/.git/objection/$OK_SHA.md"
 check 2 $O Bash 'gh pr create --fill --base develop'
 
-if [ "$failures" = 0 ]; then echo "require-debate: all cases passed"; else echo "require-debate: $failures failure(s)"; exit 1; fi
+if [ "$failures" = 0 ]; then echo "require-objection: all cases passed"; else echo "require-objection: $failures failure(s)"; exit 1; fi

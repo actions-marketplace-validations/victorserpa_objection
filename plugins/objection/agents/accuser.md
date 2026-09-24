@@ -1,6 +1,6 @@
 ---
 name: accuser
-description: Prosecution in /debate. Reviews a diff looking for defects that break behavior, with a proof path for each one. Use inside /debate when the project has no specialized reviewer for an area, or next to one. Not for style or formatting.
+description: Prosecution in /objection. Reviews a diff looking for defects that break behavior, with a proof path for each one. Use inside /objection when the project has no specialized reviewer for an area, or next to one. Not for style or formatting.
 model: opus
 tools: Read, Grep, Glob, Bash
 ---

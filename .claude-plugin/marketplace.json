@@ -1,5 +1,5 @@
 {
-  "name": "claude-debate",
+  "name": "objection",
   "description": "Adversarial review for Claude Code: accusers, a defender and a judge debate every PR before it exists.",
   "owner": {
     "name": "Victor Serpa",
@@ -7,9 +7,9 @@
   },
   "plugins": [
     {
-      "name": "debate",
-      "source": "./plugins/debate",
-      "description": "/debate skill, accuser and defender agents, and a hook that blocks PR create/ready/merge without an approved debate record for the exact commit"
+      "name": "objection",
+      "source": "./plugins/objection",
+      "description": "/objection skill, accuser and defender agents, and a hook that blocks PR create/ready/merge without an approved debate record for the exact commit"
     }
   ]
 }

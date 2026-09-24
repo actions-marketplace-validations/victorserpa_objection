@@ -1,9 +1,9 @@
 ---
-name: debate
-description: Adversarial review before opening or merging a PR. Accusers review the diff, a defender tries to refute each finding with evidence from the code, and the main session judges and stores a record for the exact commit. In repositories with .claude/debate.json, the require-debate hook blocks gh pr create, ready and merge without an APPROVED record. Use when a branch is ready for a PR, when the hook blocks, or with "init" to opt a repository in.
+name: objection
+description: Adversarial review before opening or merging a PR. Accusers review the diff, a defender tries to refute each finding with evidence from the code, and the main session judges and stores a record for the exact commit. In repositories with .claude/objection.json, the require-objection hook blocks gh pr create, ready and merge without an APPROVED record. Use when a branch is ready for a PR, when the hook blocks, or with "init" to opt a repository in.
 ---
 
-# /debate
+# /objection
 
 Whoever wrote the code does not approve the code. The debate puts
 different agents in opposite roles: the accusation looks for defects,
@@ -17,7 +17,7 @@ debate.
 
 ## init: opting a repository in
 
-If `.claude/debate.json` does not exist and the user asked for `init`
+If `.claude/objection.json` does not exist and the user asked for `init`
 (or the debate is being run for the first time), create it. Ask the user
 only what you cannot read from the repository:
 
@@ -64,7 +64,7 @@ them all in one message, each with its diff (`git diff
 origin/<base>...HEAD -- <its files>`) and the goal of the change in one
 sentence:
 
-- this plugin's `accuser` (shown as `debate:accuser`) on the whole code
+- this plugin's `accuser` (shown as `objection:accuser`) on the whole code
   diff, always;
 - each `reviewers` entry whose `paths` matches a changed file, with its
   `focus`.
@@ -81,7 +81,7 @@ sentence:
 
 ## 2. Defense
 
-One `defender` (shown as `debate:defender`) receives **all** BLOCKER,
+One `defender` (shown as `objection:defender`) receives **all** BLOCKER,
 HIGH and MEDIUM findings, numbered, with the proof each accuser gave. LOW
 goes straight to the record, without defense.
 
