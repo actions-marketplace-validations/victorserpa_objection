@@ -110,13 +110,82 @@ export function gate(input) {
     const config = loadConfig(sessionDir);
     if (!config) return ALLOW;
 
-    function defaultBase(dir) {
-      if (config.defaultBase) return config.defaultBase;
-      try {
-        return git(dir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").replace(/^origin\//, "");
-      } catch {
-        return "main";
+    // The base `gh pr create` uses without --base: the branch's
+    // gh-merge-base setting, else the repository's default branch as GitHub
+    // reports it. .objection.json's defaultBase is only a recommendation for
+    // the debate; gh never reads it. Throws when it cannot tell (fail closed).
+    function ghBase(dir, repo, head) {
+      let branch = head;
+      if (!branch) {
+        try {
+          branch = git(dir, "symbolic-ref", "--short", "HEAD");
+        } catch {
+          branch = null;
+        }
       }
+      if (branch) {
+        try {
+          const configured = git(dir, "config", `branch.${branch}.gh-merge-base`);
+          if (configured) return configured;
+        } catch {
+          // not set
+        }
+      }
+      const args = ["repo", "view"];
+      if (repo) args.push(repo);
+      args.push("--json", "defaultBranchRef", "-q", ".defaultBranchRef.name");
+      const name = execFileSync("gh", args, {
+        cwd: dir,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 15000,
+      }).trim();
+      if (!name) throw new Error("gh returned no default branch");
+      return name;
+    }
+
+    // The git remote that holds the PR's head branch: for `owner:branch`,
+    // the remote whose URL is under that owner; otherwise the one matching
+    // -R, the branch's upstream, `origin`, or the only remote. null when it
+    // cannot tell (the caller blocks with a message).
+    function remoteFor(dir, branch, repo, owner) {
+      const remotes = git(dir, "remote").split("\n").filter(Boolean);
+      const url = (r) => {
+        try {
+          return git(dir, "remote", "get-url", r);
+        } catch {
+          return "";
+        }
+      };
+      const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (owner) {
+        // gh opens the PR from <owner>/<the repository's name>, so match that
+        // name too (round 2: two remotes under one owner picked the first in
+        // alphabetical order). The name comes from -R, else from origin.
+        const name = (repo || url("origin").replace(/\.git\/?$/, ""))
+          .replace(/\/+$/, "")
+          .split(/[/:]/)
+          .pop();
+        const under = remotes.filter((r) => new RegExp(`[:/]${esc(owner)}/`, "i").test(url(r)));
+        const exact = name
+          ? under.filter((r) => new RegExp(`[:/]${esc(owner)}/${esc(name)}(\\.git)?/?$`, "i").test(url(r)))
+          : [];
+        if (exact.length === 1) return exact[0];
+        return !name && under.length === 1 ? under[0] : null;
+      }
+      if (repo) {
+        const slug = repo.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "");
+        const r = remotes.find((x) => new RegExp(`[:/]${esc(slug)}(\\.git)?/?$`, "i").test(url(x)));
+        if (r) return r;
+      }
+      try {
+        const upstream = git(dir, "config", `branch.${branch}.remote`);
+        if (remotes.includes(upstream)) return upstream;
+      } catch {
+        // no upstream
+      }
+      if (remotes.includes("origin")) return "origin";
+      return remotes.length === 1 ? remotes[0] : null;
     }
 
     const tool = input.tool || "";
@@ -533,10 +602,38 @@ export function gate(input) {
       try {
         if (action === "create") {
           const head = valueOf(rest, "-H", "--head");
-          // `--head owner:branch` points at a fork: no local copy, no record.
-          sha = git(dir, "rev-parse", head ? head.replace(/^[^:]+:/, "") : "HEAD");
-          // Without --base, gh uses the repository default branch.
-          prBase = valueOf(rest, "-B", "--base") || defaultBase(dir);
+          let headBranch = head;
+          if (head) {
+            // The PR is born from the branch on GitHub, not from a local
+            // branch with the same name (an external review caught the gate
+            // checking the local one and skipping the push check). Which
+            // remote holds it is found, not assumed to be `origin` (the
+            // round-1 accuser caught that regression).
+            const [owner, branch] = head.includes(":") ? head.split(/:(.*)/s) : [null, head];
+            headBranch = branch;
+            const remoteName = remoteFor(dir, branch, repo, owner);
+            if (!remoteName)
+              block(
+                owner
+                  ? `--head ${head}: no git remote points at ${owner}'s repository, so the gate cannot read that branch. Add it (git remote add ${owner} <url>) and push the debated commit there.`
+                  : `--head ${head}: cannot tell which remote holds that branch. Set its upstream (git push -u <remote> ${branch}).`,
+                false,
+              );
+            const local = git(dir, "rev-parse", `refs/heads/${branch}`);
+            const line = git(dir, "ls-remote", remoteName, `refs/heads/${branch}`);
+            const remoteSha = line.split(/\s+/)[0];
+            if (!remoteSha)
+              block(`branch ${branch} is not on ${remoteName}. Push the debated commit before opening the PR.`, false);
+            if (remoteSha !== local)
+              block(`${remoteName}/${branch} is at ${remoteSha.slice(0, 7)} but the local branch is at ${local.slice(0, 7)}. Push the debated commit before opening the PR.`, false);
+            sha = remoteSha;
+          } else {
+            sha = git(dir, "rev-parse", "HEAD");
+          }
+          // The base gh will really use, not .objection.json's defaultBase:
+          // --base, else the branch's gh-merge-base setting, else the
+          // repository's default branch on GitHub.
+          prBase = valueOf(rest, "-B", "--base") || ghBase(dir, repo, headBranch);
           // The PR is born from what is on the remote, not the local HEAD.
           if (!head) {
             let remote = null;
@@ -558,7 +655,7 @@ export function gate(input) {
         if (e instanceof Blocked) throw e;
         block(
           action === "create"
-            ? `could not read the commit going into the PR at ${dir}.`
+            ? `could not read the commit going into the PR, or the base gh will use, at ${dir}.`
             : `could not read the head SHA of PR ${targetOf(rest) || "for the current branch"}${repo ? ` in ${repo}` : ""}.`,
         );
       }

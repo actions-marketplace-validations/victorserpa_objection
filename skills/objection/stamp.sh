@@ -60,10 +60,16 @@ files=$(git diff --name-only "$base"...HEAD)
 docs_only=yes
 while IFS= read -r f; do
   case "$f" in
-    # .md under agent configuration dirs are the debate's own prompts
-    # (agents, skills, rules): weakening the defender must not ship
-    # without a debate. Same list as gate/check-pr.mjs.
-    .claude/* | .cursor/* | .codex/* | .gemini/* | .github/*) docs_only=no ;;
+    # Agent prompts, skills, instructions and the objection config are how
+    # the debate itself behaves: weakening the defender must not ship
+    # without a debate. Same list as gate/check-pr.mjs (NEVER_DOCS).
+    # Config dirs and instruction files at any depth; agents/ and skills/
+    # only at the root, where they are a plugin convention.
+    .claude/* | .cursor/* | .codex/* | .gemini/* | .github/* | .agents/* | .objection/* | \
+      */.claude/* | */.cursor/* | */.codex/* | */.gemini/* | */.github/* | */.agents/* | */.objection/* | \
+      AGENTS.md | CLAUDE.md | GEMINI.md | .objection.json | \
+      */AGENTS.md | */CLAUDE.md | */GEMINI.md | */.objection.json | \
+      agents/* | skills/*) docs_only=no ;;
     *.md | docs/*) ;;
     *) docs_only=no ;;
   esac
