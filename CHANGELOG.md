@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- The Gemini CI review runs on a GitHub runner: this repository's
+  `review (gemini)` job reviews every same-repository PR with it. First
+  live run: PR #42, authenticated by `GEMINI_API_KEY` alone, 4433 input +
+  1694 output tokens.
+
 ## 0.14.0 (2026-09-24)
 
 - The Action's review step runs through the Gemini CLI with
