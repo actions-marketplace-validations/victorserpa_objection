@@ -155,6 +155,15 @@ defense="$dir/defense-$sha.md"
 record="$dir/record-$sha.md"
 rm -f "$findings" "$defense"
 
+# The base config the rules came from, by content hash.
+config_id="none"
+for c in .objection.json .claude/objection.json; do
+  if gitref show "origin/$base:$c" >"$tmp/config" 2>/dev/null; then
+    config_id="$c@origin/$base sha256:$(node -e 'process.stdout.write(require("crypto").createHash("sha256").update(require("fs").readFileSync(process.argv[1])).digest("hex").slice(0, 12))' "$tmp/config")"
+    break
+  fi
+done
+
 draft_head() {
   printf '# Debate: %s @ %s\n\n' "$(git rev-parse --abbrev-ref HEAD)" "${sha:0:7}"
 }
@@ -196,8 +205,39 @@ if [ "$budget" = lean ] && [ "$brief_reason" = default ] && [ "$small" -gt 0 ] &
   exit 0
 fi
 
-# An exit 3 (no claude CLI) must reach the caller as 3, so no `|| exit 1`.
-bash "$here/review.sh" accuser "$brief" >"$accusation"
+# Invariants with a verify command (base config) that this diff touches:
+# run each from the repository root before any reviewer. A failure is a
+# BLOCKER decided by the command, not by a model; it goes into the
+# accusation, numbered like the rest, and to the defender.
+checks=""
+check_rows=""
+while IFS="$(printf '\t')" read -r cmd rule; do
+  [ -n "$cmd" ] || continue
+  # </dev/null: a check that reads stdin must not eat the next check's line.
+  if out_check=$(cd "$top" && bash -c "$cmd" 2>&1 </dev/null); then
+    checks="${checks}- \`$cmd\` (invariant: $rule): passed
+"
+  else
+    code=$?
+    last=$(printf '%s\n' "$out_check" | tail -n 3 | tr '\n|' '  ' | cut -c1-200)
+    checks="${checks}- \`$cmd\` (invariant: $rule): FAILED, exit $code
+"
+    cell_cmd=$(printf '%s' "$cmd" | tr '|' '/')
+    cell_rule=$(printf '%s' "$rule" | tr '|' '/')
+    check_rows="${check_rows}| BLOCKER | INVARIANT | (verify) | the check for \"$cell_rule\" fails: \`$cell_cmd\` exits $code | test | $last |
+"
+  fi
+done <<EOF_CHECKS
+$(sed -n 's/^<!-- objection-invariant-check: \(.*\) -->$/\1/p' "$brief")
+EOF_CHECKS
+
+# An exit 3 (no claude CLI) must reach the caller as 3, so no `|| exit 1`;
+# a check that already failed is said before leaving, or it is lost.
+bash "$here/review.sh" accuser "$brief" >"$accusation" || {
+  st=$?
+  [ -z "$check_rows" ] || printf 'objection: invariant checks that FAILED (a BLOCKER in any record of this round):\n%s' "$checks" >&2
+  exit "$st"
+}
 rc=0
 
 # Standard and thorough: one more accuser per matching reviewers entry
@@ -211,12 +251,24 @@ if [ "$budget" != lean ]; then
     while IFS="$(printf '\t')" read -r agent focus; do
       [ -n "$agent" ] || continue
       accusers="$accusers + $agent"
-      # An agent that names a Claude model runs on it; any other agent (a
-      # different tool) is only a label here: this is review.sh's model.
+      # An agent that names a Claude model runs on it; "gemini" (or
+      # "gemini-<model>") and "codex" run through that CLI, a second model
+      # family; any other agent is only a label: review.sh's model runs it.
       model="$OBJECTION_MODEL"
-      case "$agent" in opus | sonnet | haiku | claude-*) model="$agent" ;; esac
-      printf '\n### %s (focus: %s; run by review.sh%s)\n\n' "$agent" "$focus" "${model:+ on $model}" >>"$tmp/all"
-      if OBJECTION_MODEL="$model" OBJECTION_FOCUS="$focus" bash "$here/review.sh" accuser "$brief" >"$tmp/one" </dev/null; then
+      agent_runner="${OBJECTION_RUNNER:-}"
+      gemini_model="${OBJECTION_GEMINI_MODEL:-}"
+      case "$agent" in
+        opus | sonnet | haiku | claude-*) model="$agent" ;;
+        gemini) agent_runner=gemini ;;
+        gemini-*) agent_runner=gemini; gemini_model="$agent" ;;
+        codex) agent_runner=codex ;;
+      esac
+      on="$model"
+      [ "$agent_runner" = gemini ] && on="gemini${gemini_model:+ $gemini_model}"
+      [ "$agent_runner" = codex ] && on="codex"
+      printf '\n### %s (focus: %s; run by review.sh on %s)\n\n' "$agent" "$focus" "$on" >>"$tmp/all"
+      if OBJECTION_RUNNER="$agent_runner" OBJECTION_GEMINI_MODEL="$gemini_model" OBJECTION_MODEL="$model" OBJECTION_FOCUS="$focus" \
+        bash "$here/review.sh" accuser "$brief" >"$tmp/one" </dev/null; then
         cat "$tmp/one" >>"$tmp/all"
       else
         rc=$?
@@ -242,6 +294,15 @@ sev() {
       if (w ~ "^(" want ")$" && rest ~ /^([^A-Za-z-]|$)/) print
     }'
 }
+if [ -n "$check_rows" ]; then
+  {
+    printf '### invariant checks (run by debate.sh)\n\n'
+    printf '| severity | kind | file:line | defect | evidence | proof path |\n|---|---|---|---|---|---|\n'
+    printf '%s\n' "$check_rows"
+    cat "$accusation"
+  } >"$tmp/with-checks"
+  cp "$tmp/with-checks" "$accusation"
+fi
 awk -F'|' '
   function finding(s, w) {
     sub(/^[[:space:]*_]+/, "", s)
@@ -289,6 +350,12 @@ fi
   draft_head
   printf 'Budget: %s. Diff: %s...HEAD. Reviewers ran as isolated processes (review.sh, model %s).\n\n' \
     "$budget" "$diff_base" "$OBJECTION_MODEL, effort $OBJECTION_EFFORT"
+  # Which rules and which reviewers produced this record, for anyone
+  # reading it after objection or the config change.
+  printf 'objection %s; config %s; accuser %s at effort %s; defender %s at effort %s.\n\n' \
+    "$(cat "$here/VERSION" 2>/dev/null || echo unknown)" "$config_id" \
+    "$OBJECTION_MODEL" "$OBJECTION_EFFORT" "$defender_model" "$defender_effort"
+  [ -z "$checks" ] || printf 'Invariant checks:\n%s\n' "$checks"
   printf '## Accusation\n\n'
   cat "$accusation"
   printf '\n## Defense\n\n'

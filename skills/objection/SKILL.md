@@ -77,7 +77,8 @@ effort apart; the defender runs on `models.defender`, default sonnet;
 later rounds run the accuser at `models.laterEffort`, default low).
 `debate.sh` applies this; `OBJECTION_MODEL` overrides the accusers'
 model, `OBJECTION_DEFENDER_MODEL` the defender's, and `OBJECTION_EFFORT`
-every effort. Without the `claude` CLI, `review.sh`
+every effort. A `reviewers` entry whose `agent` is `gemini` or `codex`
+runs through that CLI instead: a second model family. Without the `claude` CLI, `review.sh`
 runs the roles through the `codex` CLI when that is installed.
 
 **One brief per round.** Run `bash <this skill's directory>/brief.sh
@@ -123,7 +124,10 @@ and writes a draft record whose Judge and Open sections say
 `TODO(judge)`. It prints a short summary and the draft's path: read the
 draft, judge (step 3), replace every TODO line (`stamp.sh` refuses a
 record that still has one), stamp. Findings are numbered once, in the
-Accusation; the defender and your rulings use the same numbers. Under
+Accusation; the defender and your rulings use the same numbers, and
+every number needs a ruling line in Judge that starts with it ("3.",
+"1, 2 and 5:", "4-6." or a "| 3 |" table row): stamp.sh and the CI check
+refuse a record that leaves one out. Under
 `lean`, a diff of at most `smallDiff` changed lines (default 20) that no
 invariant or `strongPaths` touches runs no reviewer: the draft comes
 pre-filled as APPROVED with one `TODO(judge)` line; read the diff and

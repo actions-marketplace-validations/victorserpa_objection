@@ -110,6 +110,8 @@ has "$T/stdin-defender" "| 2 | HIGH | BUG"
 hasnt "$T/stdin-defender" "defect MEDIUM"
 [ "$(grep -c 'defect HIGH' "$record")" = 1 ] || fail "the HIGH finding is repeated in the draft"
 has "$record" "Could not evaluate: nothing."
+has "$record" "objection $(cat "$ROOT/skills/objection/VERSION"); config .objection.json@origin/main sha256:"
+has "$record" "accuser sonnet at effort medium; defender sonnet at effort medium."
 
 # No BLOCKER or HIGH under lean: the defender never runs.
 accuse MEDIUM LOW
@@ -266,6 +268,17 @@ printf 'z\n' >>src/pay.ts && git add . && gitc commit -q -m "after the base"
 reset
 bash "$QDEBATE" develop >/dev/null 2>&1
 grep -qx sonnet "$T/models-accuser" || fail "the sonnet reviewer did not run on sonnet"
+# An agent named gemini runs through the Gemini CLI, a second model family.
+printf '{"bases":["develop"],"defaultBase":"develop","budget":"standard","reviewers":[{"paths":"^src/","focus":"money math","agent":"gemini"}]}\n' >.objection.json
+git add . && gitc commit -q -m "gemini reviewer" && git update-ref refs/remotes/origin/develop HEAD
+printf 'w\n' >>src/pay.ts && git add . && gitc commit -q -m "after gemini base"
+printf '#!/bin/bash\ncat >/dev/null\ntouch "%s/ran-gemini"\nprintf %s\n' "$T" "'{\"response\":\"| MEDIUM | BUG | src/pay.ts:1 | gemini says | read | p |\"}'" >"$T/gemini" && chmod +x "$T/gemini"
+reset
+out=$(OBJECTION_GEMINI="$T/gemini" bash "$QDEBATE" develop 2>/dev/null)
+[ -e "$T/ran-gemini" ] || fail "the gemini reviewer did not run through the Gemini CLI"
+record=$(printf '%s\n' "$out" | sed -n 's/^draft record: //p')
+has "$record" "run by review.sh on gemini"
+has "$record" "gemini says"
 # A small lean diff that no invariant or strongPaths touches: no reviewers,
 # a draft that says why, nothing spent. Above the threshold, or touching
 # an invariant, the reviewers run.
@@ -307,6 +320,34 @@ git reset -q --hard origin/main && printf 'x\n' >>src/pay.ts && git add . && git
 reset
 OBJECTION_SMALL_DIFF= bash "$DEBATE" main >/dev/null 2>&1
 [ -e "$T/ran-accuser" ] || fail "a small diff under an invariant skipped the reviewers"
+cd "$R" || exit 1
+
+# An invariant with a verify command that the diff touches: run before the
+# reviewers; a failure is a numbered BLOCKER, a pass is listed.
+V="$T/verify"
+git init -q "$V" && cd "$V" || exit 1
+printf '{"bases":["main"],"invariants":[{"paths":"^src/pay","rule":"reads stdin","verify":"cat >/dev/null"},{"paths":"^src/pay","rule":"exact money","verify":"test ! -f src/pay/broken"},{"paths":"^src/other","rule":"untouched","verify":"touch %s/ran-untouched"}]}\n' "$T" >.objection.json
+mkdir -p src/pay && echo 1 >src/pay/a.ts
+git add . && gitc commit -q -m base && git update-ref refs/remotes/origin/main HEAD
+echo x >src/pay/broken && git add . && gitc commit -q -m broken
+accuse MEDIUM
+reset
+out=$(bash "$DEBATE" main 2>/dev/null)
+record=$(printf '%s\n' "$out" | sed -n 's/^draft record: //p')
+has "$record" "| 1 | BLOCKER | INVARIANT | (verify) |"
+has "$record" "FAILED, exit 1"
+# The stdin-reading check before it did not swallow its line.
+has "$record" "(invariant: reads stdin): passed"
+has "$record" "| 2 | MEDIUM | BUG"
+printf '%s\n' "$out" | grep -qF "findings: 1 BLOCKER" || fail "the failed check was not counted ($out)"
+has "$T/stdin-defender" "(verify)"
+[ -e "$T/ran-untouched" ] && fail "an invariant the diff does not touch ran its check"
+git rm -q src/pay/broken && echo 2 >>src/pay/a.ts && git add . && gitc commit -q -m fixed
+reset
+out=$(bash "$DEBATE" main 2>/dev/null)
+record=$(printf '%s\n' "$out" | sed -n 's/^draft record: //p')
+has "$record" "(invariant: exact money): passed"
+hasnt "$record" "(verify)"
 cd "$R" || exit 1
 
 # usage.sh sums the log review.sh wrote, per branch.
