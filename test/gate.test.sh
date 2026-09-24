@@ -50,11 +50,20 @@ exit 1
 EOF
 chmod +x "$T/bin/gh"
 export PATH="$T/bin:$PATH"
+# Windows (Git Bash): node cannot run a bash script named gh, so the gate
+# is told to run the stub through bash.
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN*) export OBJECTION_GH="[\"bash\",\"$(cygpath -m "$T/bin/gh")\"]" ;;
+esac
 
 failures=0
 check() { # expected cwd tool command
   local expected=$1 cwd=$2 tool=$3 cmd=$4 json rc
-  json=$(node -e 'console.log(JSON.stringify({cwd:process.argv[1],tool_name:process.argv[2],tool_input:{command:process.argv[3]}}))' "$cwd" "$tool" "$cmd")
+  # The command goes through a file: Windows caps an argument at 32k
+  # characters, and the deep-nesting case is longer (the hook itself reads
+  # stdin, which has no such cap).
+  printf '%s' "$cmd" >"$T/cmd"
+  json=$(node -e 'console.log(JSON.stringify({cwd:process.argv[1],tool_name:process.argv[2],tool_input:{command:require("fs").readFileSync(process.argv[3],"utf8")}}))' "$cwd" "$tool" "$T/cmd")
   printf '%s' "$json" | node "$HOOK" >/dev/null 2>&1
   rc=$?
   if [ "$rc" != "$expected" ]; then
@@ -229,6 +238,22 @@ full '4, HIGH, x.ts:3, race' 'OPEN: BLOCKER=0 HIGH=0'
 stampcheck 1 origin/develop "$T/rec.md"
 full '1 MEDIUM highlight color off' 'OPEN: BLOCKER=0 HIGH=0'
 stampcheck 0 origin/develop "$T/rec.md"
+# A draft from debate.sh whose judge sections were never filled is refused,
+# even with a count and a verdict; a TODO in the findings' own text is not.
+full 'TODO(judge): what stays open'
+stampcheck 1 origin/develop "$T/rec.md"
+full '- MEDIUM: the TODO list in a.ts is stale'
+stampcheck 0 origin/develop "$T/rec.md"
+# A finding that quotes the marker (reviewing debate.sh itself) is not an
+# unfilled draft: only a line that starts with it is.
+full '- LOW: debate.sh writes TODO(judge): lines into the draft'
+stampcheck 0 origin/develop "$T/rec.md"
+# No base given: origin/<defaultBase> (master here); the stamp names it.
+git -C "$R" update-ref refs/remotes/origin/master refs/remotes/origin/develop
+full '- MEDIUM: x'
+stampcheck 0 "" "$T/rec.md"
+head -1 "$R/.git/objection/$(git -C "$R" rev-parse HEAD).md" | grep -q "base=origin/master -->$" \
+  || { echo "FAIL: stamp.sh without a base did not use defaultBase"; failures=$((failures + 1)); }
 # The structured count is required and must be zero to approve.
 full 'nothing' 'no count line here'
 stampcheck 1 origin/develop "$T/rec.md"
@@ -447,6 +472,44 @@ git -C "$T/named" remote add fork "$T/me/repo.git"
 git -C "$T/named" push -q fork feat
 check 0 "$T/named" Bash 'gh pr create --head me:feat --base develop -R up/repo'
 check 2 "$T/named" Bash 'gh pr create --head stranger:feat --base develop -R up/repo'
+# A mirror of me/repo on another host is not where gh opens the PR from:
+# it must neither be read nor make the match ambiguous. Its look-alike on
+# GitHub itself (an unreachable URL) does make it ambiguous: blocked.
+git -C "$T/named" remote add mirror "git@gitlab.example.com:me/repo.git"
+check 0 "$T/named" Bash 'gh pr create --head me:feat --base develop -R up/repo'
+git -C "$T/named" remote set-url mirror "https://github.com/me/repo.git"
+check 2 "$T/named" Bash 'gh pr create --head me:feat --base develop -R up/repo'
+git -C "$T/named" remote remove mirror
+# SSH aliases are resolved as ssh does (ssh -G reads the config, never
+# connects). The fork keeps its real (local) URL; the alias is a second
+# remote that makes the match ambiguous only if it is kept: blocked (2)
+# means it was taken for GitHub, allowed (0) means it was not.
+printf 'Host github-work github.com-work\n  HostName github.com\nHost gitlab-work\n  HostName gitlab.com\n' >"$T/ssh_config"
+export OBJECTION_SSH_CONFIG="$T/ssh_config"
+git -C "$T/named" remote add alias1 "git@github-work:me/repo.git"
+check 2 "$T/named" Bash 'gh pr create --head me:feat --base develop -R up/repo'
+git -C "$T/named" remote set-url alias1 "git@gitlab-work:me/repo.git"
+check 0 "$T/named" Bash 'gh pr create --head me:feat --base develop -R up/repo'
+git -C "$T/named" remote set-url alias1 "git@gitserver:me/repo.git"
+check 0 "$T/named" Bash 'gh pr create --head me:feat --base develop -R up/repo'
+git -C "$T/named" remote set-url alias1 "git@github.com.evil.io:me/repo.git"
+check 0 "$T/named" Bash 'gh pr create --head me:feat --base develop -R up/repo'
+git -C "$T/named" remote set-url alias1 "ssh://git@github-work/me/repo.git"
+check 2 "$T/named" Bash 'gh pr create --head me:feat --base develop -R up/repo'
+git -C "$T/named" remote set-url alias1 "git@github.com-work:me/repo.git"
+check 2 "$T/named" Bash 'gh pr create --head me:feat --base develop -R up/repo'
+# ssh cannot answer: fail closed (kept, so ambiguous, so blocked), even for
+# an alias that would have resolved elsewhere.
+# (A config file that does not exist makes ssh -G fail on every system; a
+# stub named ssh would not be run by node on Windows.)
+git -C "$T/named" remote set-url alias1 "git@gitlab-work:me/repo.git"
+OBJECTION_SSH_CONFIG="$T/no-such-config" check 2 "$T/named" Bash 'gh pr create --head me:feat --base develop -R up/repo'
+# A host that starts with "-" never reaches ssh as an option; kept (blocked).
+git -C "$T/named" remote set-url alias1 "ssh://-oProxyCommand=touch%20$T/pwned/me/repo.git"
+check 2 "$T/named" Bash 'gh pr create --head me:feat --base develop -R up/repo'
+[ -e "$T/pwned" ] && { echo "FAIL: a remote URL ran a command through ssh"; failures=$((failures + 1)); }
+git -C "$T/named" remote remove alias1
+unset OBJECTION_SSH_CONFIG
 gitc -C "$T/named" commit -q --allow-empty -m later
 git -C "$T/named" push -q fork HEAD:feat
 git -C "$T/named" reset -q --hard "$NAMED_SHA"

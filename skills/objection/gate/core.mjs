@@ -73,6 +73,43 @@ function block(reason, withHint = true) {
 
 const ALLOW = { blocked: false };
 
+// On Windows the shell commands come from Git Bash, so their paths look
+// like /c/Users/x or /tmp/x, which node would read as C:\c\Users\x.
+// cygpath (shipped with Git Bash) knows the mapping; /<drive>/ is the
+// fallback when it is not on PATH.
+// Cached: a long chain of cd targets must not spawn cygpath per segment.
+const nativeCache = new Map();
+export function nativePath(p) {
+  if (process.platform !== "win32" || !p || !p.startsWith("/")) return p;
+  if (nativeCache.has(p)) return nativeCache.get(p);
+  // The fallback is cached too: the hook is one process per command, so a
+  // cygpath that failed is not asked again for the same command.
+  let out = "";
+  try {
+    out = execFileSync("cygpath", ["-w", p], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).trim();
+  } catch {}
+  if (!out) {
+    const m = /^\/([a-zA-Z])(\/.*)?$/.exec(p);
+    out = m ? `${m[1].toUpperCase()}:${m[2] || "/"}` : p;
+  }
+  nativeCache.set(p, out);
+  return out;
+}
+
+// The gh CLI. OBJECTION_GH (a JSON array, e.g. ["bash","/path/stub"]) is
+// for tests on Windows, where node cannot run a bash script named gh.
+const GH = (() => {
+  try {
+    const v = JSON.parse(process.env.OBJECTION_GH || "null");
+    return Array.isArray(v) && v.length && v.every((x) => typeof x === "string") ? v : ["gh"];
+  } catch {
+    return ["gh"];
+  }
+})();
+function gh(args, opts) {
+  return execFileSync(GH[0], [...GH.slice(1), ...args], opts);
+}
+
 export function gate(input) {
   try {
     function git(dir, ...args) {
@@ -87,8 +124,8 @@ export function gate(input) {
     }
 
     // --- Opt-in ------------------------------------------------------------------
-    const sessionDir =
-      input.cwd && existsSync(input.cwd) ? input.cwd : process.cwd();
+    const inputCwd = nativePath(input.cwd);
+    const sessionDir = inputCwd && existsSync(inputCwd) ? inputCwd : process.cwd();
 
     function loadConfig(dir) {
       let top;
@@ -134,7 +171,7 @@ export function gate(input) {
       const args = ["repo", "view"];
       if (repo) args.push(repo);
       args.push("--json", "defaultBranchRef", "-q", ".defaultBranchRef.name");
-      const name = execFileSync("gh", args, {
+      const name = gh(args, {
         cwd: dir,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -166,7 +203,46 @@ export function gate(input) {
           .replace(/\/+$/, "")
           .split(/[/:]/)
           .pop();
-        const under = remotes.filter((r) => new RegExp(`[:/]${esc(owner)}/`, "i").test(url(r)));
+        // Only remotes on the host gh talks to (github.com, or GH_HOST for
+        // Enterprise); a local path has no host and counts. A mirror of
+        // owner/repo elsewhere made the match ambiguous and blocked.
+        const ghHost = (process.env.GH_HOST || "github.com").toLowerCase();
+        const hostOf = (u) => {
+          const m = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]*@)?([^/:]+)/i.exec(u) || /^(?:[^@/]+@)?([^/:]+):(?!\/\/)/.exec(u);
+          // "C:/x" is a Windows drive, not a host.
+          return m && !/^[a-zA-Z]$/.test(m[1]) ? m[1].toLowerCase() : null;
+        };
+        // Kept: no host (a path), GitHub itself, and SSH aliases that the
+        // SSH config maps to it (Host github-work / HostName github.com),
+        // resolved with `ssh -G`, which does not connect (a `Match exec` in
+        // the user's own config still runs, as it does on every git push).
+        // Dropped: any other host. When ssh cannot answer, or the host
+        // would reach ssh as an option ("-o..."), the remote is kept: the
+        // match turns ambiguous and blocks (fail closed). Only remotes
+        // that already match owner/name reach ssh. OBJECTION_SSH_CONFIG is
+        // an ssh config file for tests.
+        const isGh = (h) => h === ghHost || (ghHost === "github.com" && h === "ssh.github.com");
+        const viaSsh = (u) => /^ssh:\/\//i.test(u) || !/^[a-z][a-z0-9+.-]*:\/\//i.test(u);
+        const sshName = (h) => {
+          if (h.startsWith("-")) return ghHost;
+          try {
+            const cfg = process.env.OBJECTION_SSH_CONFIG ? ["-F", process.env.OBJECTION_SSH_CONFIG] : [];
+            const out = execFileSync("ssh", [...cfg, "-G", h], {
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "ignore"],
+              timeout: 5000,
+            });
+            const m = /^hostname\s+(\S+)/m.exec(out);
+            return m ? m[1].toLowerCase() : ghHost;
+          } catch {
+            return ghHost;
+          }
+        };
+        const onGh = (u) => {
+          const h = hostOf(u);
+          return h === null || isGh(h) || (viaSsh(u) && isGh(sshName(h)));
+        };
+        const under = remotes.filter((r) => new RegExp(`[:/]${esc(owner)}/`, "i").test(url(r)) && onGh(url(r)));
         const exact = name
           ? under.filter((r) => new RegExp(`[:/]${esc(owner)}/${esc(name)}(\\.git)?/?$`, "i").test(url(r)))
           : [];
@@ -529,6 +605,7 @@ export function gate(input) {
           let p = m[2] || m[3] || m[4];
           if (toRoot) p = git(dir, "rev-parse", "--show-toplevel");
           else if (p.startsWith("~")) p = join(process.env.HOME || "", p.slice(1));
+          p = nativePath(p);
           dir = isAbsolute(p) ? p : resolve(dir, p);
         }
       }
@@ -541,7 +618,7 @@ export function gate(input) {
       if (target) args.push(target);
       if (repo) args.push("-R", repo);
       args.push("--json", "headRefOid,baseRefName", "-q", '.headRefOid + " " + .baseRefName');
-      const [sha, base] = execFileSync("gh", args, {
+      const [sha, base] = gh(args, {
         cwd: dir,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
