@@ -97,4 +97,78 @@ CHANGED=3001 run 1 "$many" "$DOCREC"
 CHANGED=3 run 1 "$(printf 'docs/a.md\ndocs/b.md')" "$DOCREC"
 CHANGED=2 run 0 "$(printf 'docs/a.md\ndocs/b.md')" "$DOCREC"
 
+# --- GitLab CI (merge request pipelines) ------------------------------------
+# The merge request comes from OBJECTION_MR_JSON (the API answer); the file
+# list from git, against the MR's diff base, in a real repository.
+G="$T/gl"
+git init -q "$G" && cd "$G" || exit 1
+gitc() { git -c user.email=t@t -c user.name=t "$@"; }
+printf 'a\n' >README.md && git add . && gitc commit -q -m base
+GBASE=$(git rev-parse HEAD)
+printf 'b\n' >>README.md && git add . && gitc commit -q -m docs
+GDOCS=$(git rev-parse HEAD)
+mkdir -p src && printf 'c\n' >src/x.ts && git add . && gitc commit -q -m code
+GCODE=$(git rev-parse HEAD)
+glrun() { # expected sha target body [iid]
+  node -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({sha:process.argv[2],target_branch:process.argv[3],description:process.argv[4]}))' "$T/mr.json" "$2" "$3" "$4"
+  GITLAB_CI=true CI_MERGE_REQUEST_IID="${5-7}" CI_MERGE_REQUEST_DIFF_BASE_SHA="$GBASE" OBJECTION_MR_JSON="$T/mr.json" \
+    node "$CHECK" >/dev/null 2>&1
+  local rc=$?
+  if [ "$rc" != "$1" ]; then echo "FAIL gitlab (expected $1, got $rc): sha=${2:0:7} target=$3"; failures=$((failures + 1)); fi
+}
+full() { printf '<!-- objection: sha=%s base=origin/%s -->\n## Accusation\nx\n## Defense\nx\n## Judge\nx\n## Open\nnothing\nOPEN: BLOCKER=0 HIGH=0\nVERDICT: APPROVED\n' "$1" "$2"; }
+short() { printf '<!-- objection: sha=%s base=origin/%s -->\ndocumentation only\nVERDICT: APPROVED\n' "$1" "$2"; }
+glrun 0 "$GCODE" main "$(full "$GCODE" main)"
+glrun 1 "$GCODE" main "$(full "$GDOCS" main)"
+glrun 1 "$GCODE" develop "$(full "$GCODE" main)"
+glrun 1 "$GCODE" main "no record here"
+# The file list is read from git: code needs the sections, docs do not.
+glrun 1 "$GCODE" main "$(short "$GCODE" main)"
+glrun 0 "$GDOCS" main "$(short "$GDOCS" main)"
+# An empty diff proves nothing: refused, not passed as documentation.
+glrun 1 "$GBASE" main "$(short "$GBASE" main)"
+# The API path: a local server stands in for GitLab. The job token is sent;
+# a refused token falls back to the description variable when it is whole,
+# and fails when it was cut.
+node -e '
+const http = require("http");
+const fs = require("fs");
+const s = http.createServer((q, r) => {
+  fs.appendFileSync(process.argv[1], (q.headers["job-token"] || "-") + " " + q.url + "\n");
+  if (q.headers["job-token"] !== "good") { r.statusCode = 403; return r.end("{}"); }
+  r.setHeader("content-type", "application/json");
+  r.end(fs.readFileSync(process.argv[2]));
+}).listen(0, "127.0.0.1", () => fs.writeFileSync(process.argv[3], String(s.address().port)));
+setTimeout(() => process.exit(0), 20000);
+' "$T/api.log" "$T/mr.json" "$T/port" &
+srv=$!
+for _ in $(seq 50); do [ -s "$T/port" ] && break; sleep 0.1; done
+api="http://127.0.0.1:$(cat "$T/port")/api/v4"
+node -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({sha:process.argv[2],target_branch:"main",description:process.argv[3]}))' "$T/mr.json" "$GCODE" "$(full "$GCODE" main)"
+apirun() { # expected token description truncated
+  GITLAB_CI=true CI_MERGE_REQUEST_IID=7 CI_PROJECT_ID=42 CI_API_V4_URL="$api" CI_JOB_TOKEN="$2" \
+    CI_MERGE_REQUEST_DIFF_BASE_SHA="$GBASE" CI_COMMIT_SHA="$GCODE" CI_MERGE_REQUEST_TARGET_BRANCH_NAME=main \
+    CI_MERGE_REQUEST_DESCRIPTION="$3" CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED="$4" node "$CHECK" >/dev/null 2>&1
+  local rc=$?
+  [ "$rc" = "$1" ] || { echo "FAIL gitlab api (expected $1, got $rc): token=$2 truncated=$4"; failures=$((failures + 1)); }
+}
+apirun 0 good "" false
+grep -q "^good /api/v4/projects/42/merge_requests/7$" "$T/api.log" || { echo "FAIL: the MR was not read with the job token"; failures=$((failures + 1)); }
+apirun 0 bad "$(full "$GCODE" main)" false
+apirun 1 bad "$(full "$GCODE" main)" true
+apirun 1 bad "" false
+# Older GitLab sets no truncation flag: a description of 2700 characters or
+# more is taken as cut.
+long="$(printf 'x%.0s' $(seq 2700))
+$(full "$GCODE" main)"
+apirun 1 bad "$long" ""
+# An explicit "not truncated" is believed over the length guess.
+apirun 0 bad "$long" false
+# ...while the same record, short, passes on that fallback.
+apirun 0 bad "$(full "$GCODE" main)" ""
+kill $srv 2>/dev/null; wait $srv 2>/dev/null
+# Outside a merge request pipeline: refuse.
+glrun 1 "$GCODE" main "$(full "$GCODE" main)" ""
+cd "$T" || exit 1
+
 if [ "$failures" = 0 ]; then echo "check-pr: all cases passed"; else echo "check-pr: $failures failure(s)"; exit 1; fi
