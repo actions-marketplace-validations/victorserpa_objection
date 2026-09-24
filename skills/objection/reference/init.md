@@ -10,7 +10,8 @@ bash <this skill's directory>/init.sh --host <plugin|claude|cursor|codex|gemini>
 ```
 
 (`plugin` is Claude Code with the plugin installed; `--dry-run` shows
-what it would write.) It writes `.objection.json` from what the
+what it would write; `--advisory` when the user wants to try it without
+blocking anyone, or asked for `init --advisory`.) It writes `.objection.json` from what the
 repository shows (bases from origin, `verify` from the project's own
 scripts, `budget: lean`), the local hook for your tool, and the CI check
 for GitHub or GitLab. It never overwrites a file: when one exists it
@@ -71,8 +72,10 @@ Then install a gate, and tell the user which one you installed:
    - Cursor: `.cursor/hooks.json`, `beforeShellExecution` and
      `beforeMCPExecution` running `node <SKILL_DIR>/gate/hook.mjs --host cursor`.
    - Codex CLI: `.codex/hooks.json`, `PreToolUse` running
-     `node <SKILL_DIR>/gate/hook.mjs --host codex` (Codex hooks are
-     experimental and must be enabled).
+     `node <SKILL_DIR>/gate/hook.mjs --host codex`. Codex runs a new hook
+     only after the user trusts it in its interactive UI, and skips it
+     silently until then: tell the user to open Codex in the repository
+     once and trust it.
    - Gemini CLI: `.gemini/settings.json`, `BeforeTool` running
      `node <SKILL_DIR>/gate/hook.mjs --host gemini`.
 2. **GitHub check**, which works whatever tool (or person) opens the PR:

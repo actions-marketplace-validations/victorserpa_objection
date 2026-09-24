@@ -181,13 +181,18 @@ if [ "$budget" = lean ] && [ "$brief_reason" = default ] && [ "$small" -gt 0 ] &
     printf 'Budget: %s. Diff: %s...HEAD.\n\n' "$budget" "$diff_base"
     printf '## Accusation\n\nNo reviewers ran: small diff (%s changed lines, at most %s, and no invariant or strongPaths match). The judge reads the diff and rules on it alone.\n' "$lines" "$small"
     printf '\n## Defense\n\nnot run.\n'
-    draft_tail
+    # Pre-filled for the common case, except the one thing only the judge
+    # can say: what the diff does and why it is safe. The script never
+    # writes that sentence for them.
+    printf '\n## Judge\n\n'
+    printf 'TODO(judge): replace this line with one sentence of your own on what the %s changed lines do and why they are safe. If something is wrong, write it here and in Open instead, and fix the counts and the verdict.\n' "$lines"
+    printf '\n## Open\n\nNothing.\n\nOPEN: BLOCKER=0 HIGH=0\nVERDICT: APPROVED\n'
   } >"$record"
   echo "objection: $(git rev-parse --abbrev-ref HEAD) @ ${sha:0:7}, budget $budget, diff $diff_base...HEAD"
   [ -z "$defaulted" ] || echo "$base_note"
   echo "reviewers: $skipped"
   echo "draft record: $record"
-  echo "next: read the diff (git diff $diff_base...HEAD), judge it, replace the TODO(judge) lines, then stamp.sh."
+  echo "next: read the diff (git diff $diff_base...HEAD), replace the TODO(judge) line with what you checked, then stamp.sh."
   exit 0
 fi
 
