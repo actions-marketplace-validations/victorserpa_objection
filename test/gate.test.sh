@@ -1,13 +1,13 @@
 #!/bin/bash
-# Cases for require-objection.mjs and stamp.sh, including every bypass the
-# hook's own two debate rounds found. Run: bash test/require-objection.test.sh
+# Cases for gate/hook.mjs (core.mjs) and stamp.sh, including every bypass the
+# hook's own two debate rounds found. Run: bash test/gate.test.sh
 #
 # Uses temporary repositories and a fake `gh` on PATH (answers
 # "$STUB_SHA $STUB_BASE" to `gh pr view`), so it never talks to GitHub.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK="$ROOT/plugins/objection/hooks/require-objection.mjs"
-STAMP="$ROOT/plugins/objection/skills/objection/stamp.sh"
+HOOK="$ROOT/skills/objection/gate/hook.mjs"
+STAMP="$ROOT/skills/objection/stamp.sh"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 
@@ -44,7 +44,7 @@ check() { # expected cwd tool command
 }
 O="$T/ok"; N="$T/no"; F="$T/off"
 
-# Repository without .claude/objection.json: nothing is enforced.
+# Repository without .objection.json (or .claude/objection.json): nothing is enforced.
 check 0 $F Bash 'gh pr create --fill'
 check 0 $F Bash 'gh pr merge 5 --auto'
 check 0 $F mcp__github__create_pull_request ''
@@ -208,8 +208,35 @@ stampcheck 1 origin/develop "$T/min.md"
 # Repository not opted in: stamp.sh refuses.
 (cd "$F" && bash "$STAMP" "$T/rec.md" origin/main >/dev/null 2>&1) && { echo "FAIL: stamp.sh ran without objection.json"; failures=$((failures + 1)); }
 
+# --- Other hosts' input shapes ----------------------------------------------
+hostcheck() { # expected host json
+  local rc
+  printf '%s' "$3" | node "$HOOK" --host "$2" >"$T/out" 2>/dev/null
+  rc=$?
+  if [ "$rc" != "$1" ]; then echo "FAIL host $2 (expected $1, got $rc): $3"; failures=$((failures + 1)); fi
+}
+# JSON builders (inline JSON in bash gets brace-expanded).
+cursor_shell() { node -e "console.log(JSON.stringify({command:process.argv[1],cwd:process.argv[2]}))" "$1" "$N"; }
+cursor_mcp() { node -e "console.log(JSON.stringify({tool_name:process.argv[1],tool_input:{},mcp_server_name:\"github\",cwd:process.argv[2]}))" "$1" "$N"; }
+tool_cmd() { node -e "console.log(JSON.stringify({tool_name:process.argv[1],tool_input:{command:process.argv[2]},cwd:process.argv[3]}))" "$1" "$2" "$N"; }
+# Cursor beforeShellExecution: { command, cwd }; verdict JSON on stdout.
+hostcheck 2 cursor "$(cursor_shell "gh pr create --fill")"
+grep -q "\"permission\":\"deny\"" "$T/out" || { echo "FAIL: cursor deny JSON missing"; failures=$((failures + 1)); }
+hostcheck 0 cursor "$(cursor_shell "git status")"
+grep -q "\"permission\":\"allow\"" "$T/out" || { echo "FAIL: cursor allow JSON missing"; failures=$((failures + 1)); }
+# Cursor beforeMCPExecution: { tool_name, tool_input, mcp_server_name }.
+hostcheck 2 cursor "$(cursor_mcp create_pull_request)"
+hostcheck 0 cursor "$(cursor_mcp get_pull_request)"
+# Codex PreToolUse and Gemini BeforeTool: { tool_name, tool_input: { command }, cwd }.
+hostcheck 2 codex "$(tool_cmd Bash "gh pr create")"
+hostcheck 2 gemini "$(tool_cmd run_shell_command "gh pr merge 5")"
+hostcheck 0 gemini "$(tool_cmd read_file "")"
+# Tool-neutral opt-in file at the repository root.
+git init -q "$T/neutral" && printf '{"bases":["main"]}\n' >"$T/neutral/.objection.json" && gitc -C "$T/neutral" add . && gitc -C "$T/neutral" commit -q -m n
+check 2 "$T/neutral" Bash 'gh pr create --fill'
+
 # A record quoting APPROVED but ending REJECTED: blocked.
 printf '%s\n# x\nexample: VERDICT: APPROVED\nVERDICT: APPROVED\nVERDICT: REJECTED\n' "$stamp" >"$T/ok/.git/objection/$OK_SHA.md"
 check 2 $O Bash 'gh pr create --fill --base develop'
 
-if [ "$failures" = 0 ]; then echo "require-objection: all cases passed"; else echo "require-objection: $failures failure(s)"; exit 1; fi
+if [ "$failures" = 0 ]; then echo "gate: all cases passed"; else echo "gate: $failures failure(s)"; exit 1; fi

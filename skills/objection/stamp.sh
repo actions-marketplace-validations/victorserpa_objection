@@ -1,13 +1,13 @@
 #!/bin/bash
 # Registers a /objection record for the current HEAD, where the
-# require-objection.mjs hook looks for it.
+# objection gate (gate/core.mjs) looks for it.
 #
 # Usage: stamp.sh <record.md> <base>     (base: origin/<branch the PR targets>)
 #
 # Refuses the record when:
 # - there are uncommitted tracked changes: the record describes HEAD, and
 #   code outside the commit was not debated;
-# - the base is not one of the PR targets in .claude/objection.json;
+# - the base is not one of the PR targets in .objection.json;
 # - a required section or the verdict line is missing;
 # - the verdict is APPROVED but "## Open" still lists a BLOCKER or HIGH
 #   finding.
@@ -30,8 +30,10 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
 fi
 
 top=$(git rev-parse --show-toplevel)
-config="$top/.claude/objection.json"
-[ -f "$config" ] || { echo "no $config: this repository has not opted in to /objection." >&2; exit 1; }
+# Tool-neutral location first; .claude/ kept for Claude Code users.
+config="$top/.objection.json"
+[ -f "$config" ] || config="$top/.claude/objection.json"
+[ -f "$config" ] || { echo "no .objection.json at $top: this repository has not opted in to /objection." >&2; exit 1; }
 
 # Only real PR targets. An arbitrary base (HEAD~1) would let a docs-only
 # commit on top of undebated code fall into the documentation exemption.
@@ -58,9 +60,10 @@ files=$(git diff --name-only "$base"...HEAD)
 docs_only=yes
 while IFS= read -r f; do
   case "$f" in
-    # .md under .claude/ are the debate's own prompts (agents, skills):
-    # weakening the defender must not ship without a debate.
-    .claude/*) docs_only=no ;;
+    # .md under agent configuration dirs are the debate's own prompts
+    # (agents, skills, rules): weakening the defender must not ship
+    # without a debate. Same list as gate/check-pr.mjs.
+    .claude/* | .cursor/* | .codex/* | .gemini/* | .github/*) docs_only=no ;;
     *.md | docs/*) ;;
     *) docs_only=no ;;
   esac

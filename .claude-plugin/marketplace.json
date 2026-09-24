@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "objection",
-      "source": "./plugins/objection",
+      "source": "./",
       "description": "/objection skill, accuser and defender agents, and a hook that blocks PR create/ready/merge without an approved debate record for the exact commit"
     }
   ]

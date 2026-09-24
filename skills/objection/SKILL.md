@@ -1,0 +1,201 @@
+---
+name: objection
+description: Adversarial review before opening or merging a pull request. Accusers review the diff, a defender tries to refute each finding with evidence from the code, and the main session judges and stores a record for the exact commit. With a gate installed, PR create, ready and merge are blocked until the record is APPROVED. Use when a branch is ready for a PR, when the gate blocks, or with "init" to opt a repository in.
+license: MIT
+---
+
+# /objection
+
+Whoever wrote the code does not approve the code. The debate puts
+different roles in opposition: the accusation looks for defects, the
+defense tries to refute each accusation with evidence, and the judge
+decides. Only what survives the defense becomes a fix.
+
+**Every PR, whatever its size.** Do not route around the gate (`gh api`,
+a GitHub MCP tool, `curl` with a token, asking the human to run it for
+you without saying the debate did not run). If it blocked, run the
+debate.
+
+Everything this skill needs sits next to this file:
+
+| file | what |
+|---|---|
+| `roles/accuser.md` | the prosecution's instructions |
+| `roles/defender.md` | the defense's instructions |
+| `stamp.sh` | validates a record and stores it for the current commit |
+| `gate/hook.mjs` | local gate for Claude Code, Codex, Gemini CLI and Cursor |
+| `gate/check-pr.mjs` | the same gate as a GitHub check, for any tool or human |
+
+Below, "this skill's directory" means the directory containing this file.
+
+## init: opting a repository in
+
+If `.objection.json` does not exist at the repository root and the user
+asked for `init` (or this is the first debate), create it. Ask the user
+only what you cannot read from the repository:
+
+```json
+{
+  "bases": ["main"],
+  "defaultBase": "main",
+  "verify": ["npm run typecheck", "npm test"],
+  "reviewers": [
+    { "paths": "^src/(auth|billing)/", "agent": "security-reviewer", "focus": "the project's security checklist" }
+  ]
+}
+```
+
+- `bases`: every branch a PR may target (e.g. `["develop", "main"]`).
+- `defaultBase`: what `gh pr create` uses without `--base`.
+- `verify`: the cheap proof that runs before any accuser (step 0).
+- `reviewers`: extra accusers by path regex. `agent` names a reviewer the
+  project already defines for your tool (subagent, custom agent, or a
+  prompt file path); `focus` goes into its prompt. The generic accuser
+  always runs on code, so this list can start empty.
+
+Then install a gate, and tell the user which one you installed:
+
+1. **Local gate for your tool**, so the PR command itself is blocked.
+   Copy the matching file from `templates/` next to this file
+   (or write it from the snippet below), replacing `<SKILL_DIR>` with this
+   skill's directory, relative to the repository root when the skill is
+   inside the repository:
+   - Claude Code: nothing to do if installed as the plugin (the hook ships
+     with it). Otherwise a `PreToolUse` hook on `Bash|mcp__.*` running
+     `node <SKILL_DIR>/gate/hook.mjs`.
+   - Cursor: `.cursor/hooks.json`, `beforeShellExecution` and
+     `beforeMCPExecution` running `node <SKILL_DIR>/gate/hook.mjs --host cursor`.
+   - Codex CLI: `.codex/hooks.json`, `PreToolUse` running
+     `node <SKILL_DIR>/gate/hook.mjs --host codex` (Codex hooks are
+     experimental and must be enabled).
+   - Gemini CLI: `.gemini/settings.json`, `BeforeTool` running
+     `node <SKILL_DIR>/gate/hook.mjs --host gemini`.
+2. **GitHub check**, which works whatever tool (or person) opens the PR:
+   `.github/workflows/objection.yml` from `templates/github/objection.yml`
+   (it uses `victorserpa/objection@v1`),
+   then ask the user to make it a required status check. Recommend it
+   always; it is the only gate for tools without hooks.
+
+Commit the files. From then on the debate is enforced in this repository.
+
+## 0. Before the debate: the cheap proof
+
+A debate is argument; a test is proof. Do not spend review effort on
+code that does not pass.
+
+1. Everything committed. The record is for one SHA, and anything outside
+   the commit was not debated.
+2. Base: the branch the PR targets, from `bases`. `git fetch origin <base>`.
+3. Run every command in `verify`. Red: fix it first.
+4. **Diff touching only `*.md` or `docs/`** (outside agent configuration
+   directories like `.claude/`, `.cursor/`, `.codex/`, `.gemini/`, `.github/`):
+   skip steps 1 to 3. The record says "documentation only", without the
+   debate sections, and goes straight to the stamp.
+
+## 1. Accusation
+
+`git diff --name-only origin/<base>...HEAD` decides who accuses:
+
+- the generic accuser (`roles/accuser.md`) on the whole code diff, always;
+- each `reviewers` entry whose `paths` matches a changed file, with its
+  `focus`.
+
+**How to run a role**, in order of preference:
+
+1. **Subagents, in parallel**, if your tool has them. In Claude Code, the
+   plugin ships them as `objection:accuser` and `objection:defender`.
+   Elsewhere, pass the role file's content as the subagent's instructions.
+2. **Sequentially in a fresh context** if there are no subagents: a new
+   chat or session per role, given the role file, the diff, and nothing
+   of your own reasoning. The point is that the accuser has not seen why
+   you wrote the code the way you did.
+3. **Last resort, in this same session:** reread the role file and adopt
+   it fully, then write the findings before looking at your own code
+   again. Say in the record that the roles ran in one context; it is a
+   weaker debate and the reader should know.
+
+Give each accuser its diff (`git diff origin/<base>...HEAD -- <its
+files>`) and the goal of the change in one sentence.
+
+**Rules that go into every accuser's prompt:**
+
+- Each finding has a severity (BLOCKER, HIGH, MEDIUM, LOW), `file:line`,
+  and **how to prove it**: the test that would fail or the execution path
+  that reaches the defect.
+- **No quota.** Never ask for "at least three problems": a quota makes
+  the reviewer invent the third, and an invented finding is rework. Ask
+  what it could not evaluate.
+- Style and formatting are out.
+
+## 2. Defense
+
+The defender (`roles/defender.md`) receives **all** BLOCKER, HIGH and
+MEDIUM findings, numbered, with the proof each accuser gave. LOW goes
+straight to the record, without defense. Same preference order for how
+to run it.
+
+## 3. Judge: this session, never a smaller model
+
+A wrong diagnosis returns a plausible explanation and nobody notices. So
+the main session judges, with these rules, not with opinion:
+
+| defense said | judge does |
+|---|---|
+| REFUTED | opens the citation and checks it covers **exactly** the accused case. It does not: UPHELD. |
+| UPHELD | fixes it, or moves it to "Open" with a reason. |
+| CANNOT VERIFY | BLOCKER or HIGH: treated as UPHELD. **Tie-break by test:** write the test the accuser said would fail. Fails: UPHELD. Passes: REFUTED, and the test stays in the repository. |
+
+**The judge never refutes a finding alone.** Refuting requires the
+defender's citation, checked. The judge wrote the code, and that is the
+bias the debate exists to cut.
+
+## 4. Rounds
+
+Fixed something: commit (a `fix:` in the same branch, before the PR, is
+the cheap fix) and redo steps 0 to 3 **only on the fix diff** (`git diff
+<previous-round-sha>..HEAD`), with the accusers for that area. At most
+three rounds; on the fourth, stop and bring what does not converge to the
+human.
+
+## 5. Record and stamp
+
+Write the record to a scratch file, with these exact sections:
+
+```markdown
+# Debate: <branch> @ <sha7>
+
+## Accusation
+<one finding per line: #, severity, accuser, file:line, sentence>
+
+## Defense
+<#, defender verdict, evidence>
+
+## Judge
+<#, final decision, and what was fixed (commit) or why not>
+
+## Open
+<what was left out, with severity and reason; "nothing" if nothing>
+
+VERDICT: APPROVED
+```
+
+APPROVED only with no BLOCKER or HIGH under "Open". Then:
+
+```bash
+bash <this skill's directory>/stamp.sh <record.md> origin/<base>
+```
+
+It refuses a record without the sections, with a dirty tree, with a base
+outside `bases`, or APPROVED with a serious finding open. It stores the
+record with a stamp (`<!-- objection: sha=... base=... -->`) on the first
+line and prints where. Then push the debated commit and **paste the
+stored record, stamp line included, into the PR body**: the GitHub check
+reads it from there, and reviewers see what was rejected and what was
+fixed because of it. A later push changes the SHA: debate the new
+commits and replace the record in the body.
+
+## Cost
+
+Two to five reviewer runs per round. Worth it per PR, not per commit. A
+three-line change makes a three-line PR, and the debate comes out short
+because there is little to accuse.

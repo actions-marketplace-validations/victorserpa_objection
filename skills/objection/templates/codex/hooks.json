@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [{ "type": "command", "command": "node <SKILL_DIR>/gate/hook.mjs --host codex", "timeout": 30 }]
+      }
+    ]
+  }
+}

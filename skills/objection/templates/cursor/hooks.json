@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [{ "command": "node <SKILL_DIR>/gate/hook.mjs --host cursor" }],
+    "beforeMCPExecution": [{ "command": "node <SKILL_DIR>/gate/hook.mjs --host cursor" }]
+  }
+}

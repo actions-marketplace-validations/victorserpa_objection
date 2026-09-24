@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|mcp__.*",
+        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/<SKILL_DIR>/gate/hook.mjs\"", "timeout": 30 }]
+      }
+    ]
+  }
+}

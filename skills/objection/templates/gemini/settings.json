@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": ".*",
+        "hooks": [{ "type": "command", "command": "node <SKILL_DIR>/gate/hook.mjs --host gemini", "timeout": 30000 }]
+      }
+    ]
+  }
+}

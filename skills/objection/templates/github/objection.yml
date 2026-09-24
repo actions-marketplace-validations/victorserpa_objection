@@ -1,0 +1,14 @@
+# Copy to .github/workflows/objection.yml, then make "objection / record"
+# a required status check in branch protection.
+name: objection
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: victorserpa/objection@v1

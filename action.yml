@@ -1,0 +1,13 @@
+name: objection
+description: Fails a pull request unless its body carries an APPROVED /objection debate record for the current head SHA and base.
+author: Victor Serpa
+branding:
+  icon: alert-octagon
+  color: red
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: node "$GITHUB_ACTION_PATH/skills/objection/gate/check-pr.mjs"

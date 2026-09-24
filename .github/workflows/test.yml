@@ -11,4 +11,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: bash test/require-objection.test.sh
+      - run: bash test/gate.test.sh
+      - run: bash test/check-pr.test.sh
+      - run: bash test/roles-in-sync.test.sh
+  commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Conventional Commits, English, no Co-Authored-By
+        env:
+          RANGE: ${{ github.event_name == 'pull_request' && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || format('{0}..{1}', github.event.before, github.event.after) }}
+        run: |
+          case "$RANGE" in 0000000000000000000000000000000000000000..*) RANGE="${RANGE#*..}~1..${RANGE#*..}" ;; esac
+          status=0
+          for c in $(git rev-list --no-merges "$RANGE"); do
+            git log -1 --format=%B "$c" > /tmp/msg
+            bash scripts/check-commit-msg.sh /tmp/msg || { echo "  in commit $c"; status=1; }
+          done
+          exit $status
