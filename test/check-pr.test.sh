@@ -24,7 +24,7 @@ run() { # expected files body
 
 record() { # sha base open verdicts...
   local sha=$1 base=$2 open=$3; shift 3
-  printf '<!-- objection: sha=%s base=%s -->\n# Debate\n\n## Accusation\n1 HIGH x\n\n## Defense\n1 UPHELD\n\n## Judge\n1 fixed\n\n## Open\n%s\n\n' "$sha" "$base" "$open"
+  printf '<!-- objection: sha=%s base=%s -->\n# Debate\n\n## Accusation\n1 HIGH x\n\n## Defense\n1 UPHELD\n\n## Judge\n1 fixed\n\n## Open\n%s\n\n%s\n' "$sha" "$base" "$open" "${OPENLINE-OPEN: BLOCKER=0 HIGH=0}"
   for v in "$@"; do printf 'VERDICT: %s\n' "$v"; done
 }
 
@@ -45,6 +45,16 @@ run 1 "$CODE" "$(record $OLD origin/main nothing APPROVED)
 $(record $HEAD origin/main nothing REJECTED)"
 run 0 "$CODE" "$(record $OLD origin/main nothing REJECTED)
 $(record $HEAD origin/main nothing APPROVED)"
+# The cross-check reads the template's own "#, severity" order.
+run 1 "$CODE" "$(record $HEAD origin/main '1 HIGH race on retry' APPROVED)"
+run 1 "$CODE" "$(record $HEAD origin/main '4, HIGH, x.ts:3, race' APPROVED)"
+run 0 "$CODE" "$(record $HEAD origin/main '1 MEDIUM highlight color off' APPROVED)"
+run 0 "$CODE" "$(record $HEAD origin/main '10, high-level note' APPROVED)"
+run 0 "$CODE" "$(record $HEAD origin/main '- High-risk area untouched (MEDIUM)' APPROVED)"
+# The structured count: required, and zero to approve.
+OPENLINE="" run 1 "$CODE" "$(OPENLINE="" record $HEAD origin/main nothing APPROVED)"
+run 1 "$CODE" "$(OPENLINE="OPEN: BLOCKER=0 HIGH=1" record $HEAD origin/main '- MEDIUM: x' APPROVED)"
+run 1 "$CODE" "$(OPENLINE="OPEN: BLOCKER=1 HIGH=0" record $HEAD origin/main nothing APPROVED)"
 # Missing sections on a code diff.
 run 1 "$CODE" "<!-- objection: sha=$HEAD base=origin/main -->
 VERDICT: APPROVED"

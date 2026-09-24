@@ -25,6 +25,29 @@
 // xargs, tool names, arbitrary stamp base, hand-written records). Every one
 // of them is a case in test/gate.test.sh.
 //
+// Threat model, in one sentence: this gate stops an agent that FORGETS the
+// debate (the natural ways of writing the command), not one that DISGUISES
+// the command on purpose (assembled from pieces, hidden in an alias, a
+// file, a variable or another language). Disguise already breaks the
+// skill's rule, and the GitHub check with a required status check is the
+// gate that does not read commands. So a natural form that passes, or an
+// innocent command that gets blocked, is HIGH; a form that only exists to
+// evade is LOW. The first adopter debated this gate for six rounds before
+// that sentence existed, mostly chasing regressions of its own fixes.
+//
+// Which text each rule reads (decided here, once):
+//   command   raw input, with disguised `gh` names normalized. GraphQL
+//             mutations are looked for here, heredocs included, because a
+//             multi-line query is the normal way to write one.
+//   noDocs    command without heredoc bodies (unless a shell reads stdin).
+//             `gh api` REST writes and `cd` paths are read here.
+//   active    noDocs with inert quoted text replaced by ''. Quoted values
+//             glued to -R/-B/-H (or --repo=/--base=/--head=) become plain
+//             values; any other glued value becomes a glued ''. Arguments
+//             of -c/-lc (shells, python, su...), -e (node, perl, ruby) and
+//             eval are kept as code (allowlist).
+//             `gh pr <action>` detection and positions are measured here.
+//
 // Fails closed when the command is about a PR: if it cannot verify (gh
 // offline, PR not found), it blocks and says why. A human bypasses it by
 // running the command in their own terminal; the gate only binds the agent.
@@ -131,6 +154,79 @@ export function gate(input) {
       );
     }
 
+    // Index just past the `)` that closes the `(` at index k (the one right
+    // after `$`), skipping quoted text and nested substitutions inside it.
+    // Nesting is capped: past the cap the rest counts as one substitution
+    // (a round-4 accuser overflowed the stack with thousands of "$(, which
+    // made the hook exit 1, a non-blocking error for the host).
+    function substEnd(s, k, level = 0) {
+      if (level > 50) return s.length;
+      let depth = 1;
+      for (let p = k + 1; p < s.length; p++) {
+        const ch = s[p];
+        if (ch === "\\") { p++; continue; }
+        if (ch === "'") { const q = s.indexOf("'", p + 1); p = q === -1 ? s.length : q; continue; }
+        if (ch === '"') {
+          let q = p + 1;
+          while (q < s.length && s[q] !== '"') {
+            if (s[q] === "\\") q++;
+            else if (s[q] === "$" && s[q + 1] === "(") q = substEnd(s, q + 1, level + 1) - 1;
+            q++;
+          }
+          p = q;
+          continue;
+        }
+        if (ch === "(") depth++;
+        if (ch === ")" && --depth === 0) return p + 1;
+      }
+      return s.length;
+    }
+
+    // The code of each top-level $(...) and backtick substitution in s.
+    function substitutions(s) {
+      const codes = [];
+      for (let p = 0; p < s.length; p++) {
+        if (s[p] === "\\") { p++; continue; }
+        if (s[p] === "$" && s[p + 1] === "(") {
+          const end = substEnd(s, p + 1);
+          codes.push(s.slice(p + 2, end - 1));
+          p = end - 1;
+        } else if (s[p] === "`") {
+          const end = s.indexOf("`", p + 1);
+          codes.push(s.slice(p + 1, end === -1 ? s.length : end));
+          p = end === -1 ? s.length : end;
+        }
+      }
+      return codes;
+    }
+
+    // s with every substitution that does not mention gh replaced by ''
+    // (single-quoted text left alone). Used to count `cd`s: a cd inside
+    // such a substitution runs in a subshell and cannot move gh.
+    function dropInnocentSubsts(s) {
+      let out = "";
+      for (let p = 0; p < s.length; p++) {
+        const ch = s[p];
+        if (ch === "\\") { out += s.slice(p, p + 2); p++; continue; }
+        if (ch === "'") {
+          const q = s.indexOf("'", p + 1);
+          const e = q === -1 ? s.length : q;
+          out += s.slice(p, e + 1);
+          p = e;
+          continue;
+        }
+        if ((ch === "$" && s[p + 1] === "(") || ch === "`") {
+          const end = ch === "`" ? (s.indexOf("`", p + 1) + 1 || s.length) : substEnd(s, p + 1);
+          const code = s.slice(ch === "`" ? p + 1 : p + 2, end - 1);
+          out += /\bgh\b/.test(code) ? s.slice(p, end) : "''";
+          p = end - 1;
+          continue;
+        }
+        out += ch;
+      }
+      return out;
+    }
+
     function stripInertText(s) {
       let out = "";
       let i = 0;
@@ -141,17 +237,83 @@ export function gate(input) {
           i += 2;
           continue;
         }
+        // Unquoted command substitution. Code that never mentions gh cannot
+        // create or merge a PR (short of disguise, LOW), so it becomes a
+        // placeholder; otherwise its `)` cut the command short and hid the
+        // PR number after it (round 4: `gh pr merge -t $(git log ...) 42`).
+        if ((c === "$" && s[i + 1] === "(") || c === "`") {
+          const end = c === "`" ? s.indexOf("`", i + 1) + 1 || s.length : substEnd(s, i + 1);
+          const code = s.slice(c === "`" ? i + 1 : i + 2, c === "`" ? end - 1 : end - 1);
+          out += /\bgh\b/.test(code) ? ` ${code} ` : " '' ";
+          i = end;
+          continue;
+        }
         if (c === "'" || c === '"') {
           let j = i + 1;
           while (j < s.length && s[j] !== c) {
             if (c === '"' && s[j] === "\\") j++;
+            else if (c === '"' && s[j] === "$" && s[j + 1] === "(") j = substEnd(s, j + 1) - 1;
             j++;
           }
           const inside = s.slice(i + 1, j);
-          const before = out.slice(-12);
-          const executes =
-            /(^|\s)(-c|eval)\s*$/.test(before) || (c === '"' && /\$\(|`/.test(inside));
-          out += executes ? ` ${inside} ` : " '' ";
+          const before = out.slice(-80);
+          // A quoted value glued to a flag is part of that word for the
+          // shell (`--repo="o/r"` is `--repo=o/r`, `-R"o/r"` is `-Ro/r`).
+          // The gate needs three of those values (repo, base, head), so
+          // they come out as plain `-R o/r` / `--repo=o/r`. Any other glued
+          // value (`-t"feat(ui)"`, `--body="a;b"`) becomes a glued '' so
+          // its characters cannot cut the command short, and the flag keeps
+          // its shape. A round-2 accuser found both: keeping every glued
+          // value raw broke `-R"o/r"` and let `(`/`;` inside a subject hide
+          // the PR number.
+          // Glued means a value, whatever it contains, so it always stays
+          // glued: a detached '' would read as a positional argument (the PR
+          // number). A substitution inside that runs gh is still a command.
+          const glued = i > 0 && !/[\s;&|()`]/.test(s[i - 1]);
+          if (glued) {
+            const plain = !/[\s;&|()`<>$]/.test(inside);
+            if (plain && /(^|\s)-[RBH]$/.test(out)) out += ` ${inside}`;
+            else if (plain && /(^|\s)--(repo|base|head)=$/.test(out)) out += inside;
+            else {
+              out += "''";
+              const code = c === '"' ? substitutions(inside).filter((x) => /\bgh\b/.test(x)) : [];
+              if (code.length) out += ` ; ${code.map((x) => stripInertText(x)).join(" ; ")} `;
+            }
+            i = j + 1;
+            continue;
+          }
+          // Allowlist of what executes its argument as code, with only
+          // options between the program and the flag (never a script name):
+          //   a shell (or $SHELL) then -c, alone or combined (`bash -lc`);
+          //   python, su, runuser, script, flock then exactly -c;
+          //   node, perl, ruby then exactly -e (`perl -pe`/`-ne` take a
+          //   regex, not a command);
+          //   eval.
+          // Any other -c (grep -c, rg -c, psql -c, tar -czf) is a flag. The
+          // round-3 accuser showed the cost of a wider list: counting any
+          // quoted word as an interpreter blocked `rg -g "*.md" -c "gh pr
+          // create"`. A quoted interpreter (`"$SHELL" -c`) is LOW, not listed.
+          const opts = String.raw`(?:\s+-[^\s;&|]*)*`;
+          const shell = String.raw`(?:\S*\/)?(?:bash|sh|zsh|dash|ksh|fish|pwsh|powershell|\$\{?SHELL(?::-[^}\s]*)?\}?)`;
+          const runsC = String.raw`(?:\S*\/)?(?:python[0-9.]*|su|runuser|script|flock)`;
+          const runsE = String.raw`(?:\S*\/)?(?:node|perl|ruby)`;
+          const runsAsCode =
+            new RegExp(String.raw`(^|[\s;&|(\`])${shell}${opts}\s+-[A-Za-z]*c\s*$`).test(before) ||
+            new RegExp(String.raw`(^|[\s;&|(\`])${runsC}${opts}\s+-c\s*$`).test(before) ||
+            new RegExp(String.raw`(^|[\s;&|(\`])${runsE}${opts}\s+-e\s*$`).test(before) ||
+            /(^|[\s;&|(`])eval\s*$/.test(before);
+          // Code is kept only when it mentions gh (see the unquoted case
+          // above). In a double-quoted string that is not itself code, only
+          // the substitutions inside it can run: "docs: gh pr merge
+          // ($(date))" keeps nothing, "$(gh pr create)" keeps the command.
+          if (runsAsCode) {
+            out += /\bgh\b/.test(inside) ? ` ${stripInertText(inside)} ` : " '' ";
+          } else if (c === '"') {
+            const code = substitutions(inside).filter((x) => /\bgh\b/.test(x));
+            out += code.length ? ` ${code.map((x) => stripInertText(x)).join(" ; ")} ` : " '' ";
+          } else {
+            out += " '' ";
+          }
           i = j + 1;
           continue;
         }
@@ -202,7 +364,7 @@ export function gate(input) {
     // `gh` in any command position (start, after ; & | ( $( backtick, `time`,
     // `command`, VAR=x, absolute path), with -R/--repo before or after `pr`.
     const reGh =
-      /(?:^|[\s;&|(`])(?:\S*\/)?gh((?:\s+(?:-R|--repo)(?:\s+|=)\S+)*)\s+pr((?:\s+(?:-R|--repo)(?:\s+|=)\S+)*)\s+(create|new|ready|merge)\b([^;&|\n)]*)/g;
+      /(?:^|[\s;&|(`])(?:\S*\/)?gh((?:\s+(?:-R\s*=?|--repo(?:\s+|=))\S+)*)\s+pr((?:\s+(?:-R\s*=?|--repo(?:\s+|=))\S+)*)\s+(create|new|ready|merge)\b([^;&|\n)]*)/g;
 
     const matches = [...active.matchAll(reGh)];
     if (matches.length === 0) return ALLOW;
@@ -223,9 +385,13 @@ export function gate(input) {
         const t = toks[k];
         if (t === "-R" || t === "--repo") return toks[k + 1];
         if (t.startsWith("--repo=")) return t.slice(7);
+        // Short flag with its value attached, as gh accepts: -Ro/r, -R=o/r.
+        if (/^-R./.test(t)) return t.slice(2).replace(/^=/, "");
       }
       return null;
     }
+
+    const UNREADABLE = "\u0000unreadable";
 
     function targetOf(rest) {
       const toks = tokens(rest);
@@ -236,7 +402,10 @@ export function gate(input) {
           continue;
         }
         if (t.startsWith("-")) continue;
-        if (t === "''") continue;
+        // A PR number the gate cannot read (a variable, a substitution, a
+        // quoted value): skipping it would check the current branch's PR
+        // while another one gets merged (round 4). Say so instead.
+        if (t === "''" || t.startsWith("$")) return UNREADABLE;
         return t;
       }
       return null;
@@ -248,6 +417,9 @@ export function gate(input) {
         for (const n of names) {
           if (toks[k] === n) return toks[k + 1];
           if (toks[k].startsWith(`${n}=`)) return toks[k].slice(n.length + 1);
+          // Short flag with its value attached: -Bmain, -Hfeat/x.
+          if (/^-[A-Za-z]$/.test(n) && toks[k].length > 2 && toks[k].startsWith(n))
+            return toks[k].slice(2).replace(/^=/, "");
         }
       }
       return null;
@@ -261,7 +433,7 @@ export function gate(input) {
       // text shifting the count. Without certainty about the directory, the
       // record checked could belong to another repository.
       const nActive = [...active.matchAll(/(?:^|[\s;&|(])cd\s/g)].length;
-      const nOriginal = [...noDocs.matchAll(/(?:^|[\s;&|(])cd\s/g)].length;
+      const nOriginal = [...dropInnocentSubsts(noDocs).matchAll(/(?:^|[\s;&|(])cd\s/g)].length;
       if (
         /\(\s*cd\b[^)]*\)/.test(before) ||
         /(^|[\s;&|(])(pushd|popd)\b/.test(before) ||
@@ -279,8 +451,15 @@ export function gate(input) {
       if (n > 0) {
         const m = [...noDocs.matchAll(reCdOriginal)][n - 1];
         if (m) {
+          // `cd "$(git rev-parse --show-toplevel)"` is how agents go back to
+          // the repository root: resolve it the same way instead of reading
+          // the substitution as a path (it used to block an innocent merge).
+          const toRoot = /^[\s;&|(]*cd\s+"?\$\(\s*git\s+rev-parse\s+--show-toplevel\s*\)"?(?=[\s;&|)]|$)/.test(
+            noDocs.slice(m.index),
+          );
           let p = m[2] || m[3] || m[4];
-          if (p.startsWith("~")) p = join(process.env.HOME || "", p.slice(1));
+          if (toRoot) p = git(dir, "rev-parse", "--show-toplevel");
+          else if (p.startsWith("~")) p = join(process.env.HOME || "", p.slice(1));
           dir = isAbsolute(p) ? p : resolve(dir, p);
         }
       }
@@ -370,7 +549,10 @@ export function gate(input) {
               block(`the branch remote is at ${remote.slice(0, 7)} but the debate was about ${sha.slice(0, 7)}. Push the debated commit before opening the PR.`, false);
           }
         } else {
-          ({ sha, base: prBase } = fromPr(dir, repo, targetOf(rest)));
+          const target = targetOf(rest);
+          if (target === UNREADABLE)
+            block(`gh pr ${action} gets its PR number from a variable or a command, so the gate cannot tell which PR it is. Put the number in the command itself.`);
+          ({ sha, base: prBase } = fromPr(dir, repo, target));
         }
       } catch (e) {
         if (e instanceof Blocked) throw e;

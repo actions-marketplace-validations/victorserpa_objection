@@ -25,7 +25,20 @@ printf '%s\n# x\nVERDICT: APPROVED\n' "$stamp" >"$T/ok/.git/objection/$OK_SHA.md
 mkdir "$T/bin"
 cat >"$T/bin/gh" <<'EOF'
 #!/bin/bash
-[ "$1 $2" = "pr view" ] && { [ -n "${STUB_SLEEP:-}" ] && sleep "$STUB_SLEEP"; echo "$STUB_SHA ${STUB_BASE:-develop}"; exit 0; }
+if [ "$1 $2" = "pr view" ]; then
+  [ -n "${STUB_SLEEP:-}" ] && sleep "$STUB_SLEEP"
+  # With STUB_WANT set ("<target> [-R <repo>]"), answer the approved SHA only
+  # when exactly those arguments arrive: a stub that answers the same SHA
+  # for any target cannot tell a right parse from a wrong one.
+  shift 2
+  args="$*"
+  args="${args%% --json*}"
+  [ -n "${STUB_LOG:-}" ] && printf '%s\n' "$args" >>"$STUB_LOG"
+  if [ -n "${STUB_WANT:-}" ] && [ "$args" != "$STUB_WANT" ]; then
+    echo "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef ${STUB_BASE:-develop}"; exit 0
+  fi
+  echo "$STUB_SHA ${STUB_BASE:-develop}"; exit 0
+fi
 exit 1
 EOF
 chmod +x "$T/bin/gh"
@@ -180,7 +193,9 @@ git -C "$R" update-ref refs/remotes/origin/develop HEAD
 printf 'x\n' >"$R/a.ts" && git -C "$R" add a.ts && gitc -C "$R" commit -q -m code
 printf '# doc\n' >"$R/b.md" && git -C "$R" add b.md && gitc -C "$R" commit -q -m doc
 printf 'VERDICT: APPROVED\n' >"$T/min.md"
-full() { printf '# D\n\n## Accusation\nx\n\n## Defense\nx\n\n## Judge\nx\n\n## Open\n%s\n\nVERDICT: APPROVED\n' "$1" >"$T/rec.md"; }
+full() { # open-list [open-count] [verdict]
+  printf '# D\n\n## Accusation\nx\n\n## Defense\nx\n\n## Judge\nx\n\n## Open\n%s\n\n%s\nVERDICT: %s\n' "$1" "${2:-OPEN: BLOCKER=0 HIGH=0}" "${3:-APPROVED}" >"$T/rec.md"
+}
 stampcheck() { # expected base record
   (cd "$R" && bash "$STAMP" "$3" "$2" >/dev/null 2>&1); local rc=$?
   if { [ "$1" = 0 ] && [ $rc != 0 ]; } || { [ "$1" != 0 ] && [ $rc = 0 ]; }; then
@@ -200,6 +215,22 @@ full '1. **High** bold severity'
 stampcheck 1 origin/develop "$T/rec.md"
 full 'no HIGH finding is left'
 stampcheck 0 origin/develop "$T/rec.md"
+# The cross-check reads the template's own "#, severity" order.
+full '1 HIGH race on retry' 'OPEN: BLOCKER=0 HIGH=0'
+stampcheck 1 origin/develop "$T/rec.md"
+full '4, HIGH, x.ts:3, race' 'OPEN: BLOCKER=0 HIGH=0'
+stampcheck 1 origin/develop "$T/rec.md"
+full '1 MEDIUM highlight color off' 'OPEN: BLOCKER=0 HIGH=0'
+stampcheck 0 origin/develop "$T/rec.md"
+# The structured count is required and must be zero to approve.
+full 'nothing' 'no count line here'
+stampcheck 1 origin/develop "$T/rec.md"
+full '- MEDIUM: x' 'OPEN: BLOCKER=0 HIGH=1'
+stampcheck 1 origin/develop "$T/rec.md"
+full '- HIGH: race on retry' 'OPEN: BLOCKER=0 HIGH=0'
+stampcheck 1 origin/develop "$T/rec.md"
+full '- HIGH: race on retry' 'OPEN: BLOCKER=0 HIGH=1' REJECTED
+stampcheck 0 origin/develop "$T/rec.md"
 # The debate's own prompts (.claude/*.md) are not "documentation only".
 mkdir -p "$R/.claude/agents" && printf 'x\n' >"$R/.claude/agents/c.md"
 git -C "$R" add .claude && gitc -C "$R" commit -q -m prompt
@@ -207,6 +238,147 @@ git -C "$R" update-ref refs/remotes/origin/develop HEAD~1
 stampcheck 1 origin/develop "$T/min.md"
 # Repository not opted in: stamp.sh refuses.
 (cd "$F" && bash "$STAMP" "$T/rec.md" origin/main >/dev/null 2>&1) && { echo "FAIL: stamp.sh ran without objection.json"; failures=$((failures + 1)); }
+
+# --- Lessons from the first adopter's six-round debate ----------------------
+# Each natural form failed on the version before this fix (negative
+# control), and each sits next to the innocent look-alike that must pass.
+# A quoted value glued to the flag is still the repo flag: blocked without a record.
+check 2 $N Bash 'gh --repo="o/r" pr create --fill'
+check 2 $N Bash "gh --repo='o/r' pr create"
+check 2 $N Bash 'gh pr --repo="o/r" merge 5'
+# ...and with a record, the right target and repo reach gh pr view.
+export STUB_SHA=$OK_SHA
+STUB_WANT="5 -R o/r" check 0 $O Bash 'gh -R"o/r" pr merge 5'
+STUB_WANT="5 -R o/r" check 0 $O Bash 'gh --repo="o/r" pr merge 5 --squash'
+# -m and -r are --merge and --rebase, not flags that take a value.
+STUB_WANT="338" check 0 $O Bash 'gh pr merge -m 338'
+STUB_WANT="338" check 0 $O Bash 'gh pr merge -r 338'
+STUB_WANT="338" check 0 $O Bash 'gh pr merge --squash --delete-branch 338'
+# The stub can say no: another target is not approved.
+STUB_WANT="999" check 2 $O Bash 'gh pr merge -m 338'
+export STUB_SHA=deadbeef
+# Innocent look-alikes keep passing.
+check 0 $N Bash 'gh pr view --repo="o/r" 5'
+check 0 $N Bash 'git commit -m "fix: run gh pr merge -m 5 later"'
+check 0 $N Bash 'grep -c "gh pr create" notes.md'
+check 0 $N Bash "psql -c \"select 'gh pr create'\""
+check 0 $N Bash 'tar -czf out.tgz "gh pr merge 5"'
+# -c executes only after something that runs code.
+check 2 $N Bash "sh -c 'gh pr create'"
+check 2 $N Bash "/usr/bin/env bash -c 'gh pr merge 5'"
+
+# --- Round 2 of that fix: its own regressions ----------------------------
+# Every "allowed with a record" case has its twin "blocked without one":
+# a case that only expects 0 also passes when the gate never saw the
+# command. And the stub log proves gh got the right target and repo.
+called() { # expected-args
+  if ! grep -qxF "$1" "$T/gh.log" 2>/dev/null; then
+    echo "FAIL: gh pr view was not called with [$1] (log: $(tr '\n' '|' <"$T/gh.log" 2>/dev/null))"
+    failures=$((failures + 1))
+  fi
+  : >"$T/gh.log"
+}
+export STUB_LOG="$T/gh.log"
+: >"$T/gh.log"
+# Short flags with a glued value, quoted or not.
+check 2 $N Bash 'gh -R"o/r" pr merge 5'
+check 2 $N Bash "gh -R'o/r' pr create --fill"
+check 2 $N Bash 'gh pr -R"o/r" merge 5'
+check 2 $N Bash 'gh -Ro/r pr create --fill'
+check 2 $N Bash 'gh pr merge -R"o/r" 5'
+export STUB_SHA=$OK_SHA
+: >"$T/gh.log"
+STUB_WANT="5 -R o/r" check 0 $O Bash 'gh -R"o/r" pr merge 5'; called "5 -R o/r"
+STUB_WANT="5 -R o/r" check 0 $O Bash 'gh pr merge -R"o/r" 5'; called "5 -R o/r"
+STUB_WANT="5 -R o/r" check 0 $O Bash 'gh pr merge -Ro/r 5'; called "5 -R o/r"
+# A glued value with ( or ; must not hide the PR number.
+check 2 $N Bash 'gh pr merge -t"feat(ui)" 42 --squash'
+STUB_WANT="42" check 0 $O Bash 'gh pr merge -t"feat(ui)" 42 --squash'; called "42"
+STUB_WANT="5" check 0 $O Bash 'gh pr merge --subject="fix(gate):x" 5'; called "5"
+STUB_WANT="42" check 0 $O Bash 'gh pr merge --body="a;b" 42'; called "42"
+export STUB_SHA=deadbeef
+# Glued base and head are read, not dropped (the record is for develop).
+check 0 $O Bash 'gh pr create -B"develop" --fill'
+check 2 $O Bash 'gh pr create -B"master" --fill'
+check 2 $O Bash 'gh pr create -Bmaster --fill'
+check 2 $O Bash 'gh pr create -H"nonexistent" --base develop'
+# Natural ways to run a shell command string.
+check 2 $N Bash "bash -lc 'gh pr merge 5'"
+check 2 $N Bash "sh -xc 'gh pr create --fill'"
+check 2 $N Bash '$SHELL -c "gh pr merge 5"'
+check 2 $N Bash '${SHELL:-bash} -c "gh pr create --fill"'
+check 2 $N Bash "pwsh -c 'gh pr merge 5'"
+check 2 $N Bash "python3 -c 'gh pr merge 5'"
+
+# --- Round 4: a command substitution that does not run gh ------------------
+# `$(...)` or backticks before the PR number used to cut the command at `)`,
+# so gh looked up the wrong target and an innocent merge was blocked. Code
+# that does not mention gh cannot create or merge a PR (short of disguise,
+# LOW), so it becomes a placeholder like inert text.
+export STUB_LOG="$T/gh.log" STUB_SHA=$OK_SHA
+: >"$T/gh.log"
+STUB_WANT="42" check 0 $O Bash 'gh pr merge -t "$(git log -1 --format=%s)" 42 --squash'; called "42"
+STUB_WANT="42" check 0 $O Bash 'gh pr merge --body="$(cat notes.md)" 42'; called "42"
+STUB_WANT="42" check 0 $O Bash 'gh pr merge -t $(git log -1 --format=%s) 42'; called "42"
+STUB_WANT="42" check 0 $O Bash 'gh pr merge -t `git log -1 --format=%s` 42'; called "42"
+STUB_WANT="42" check 0 $O Bash 'gh pr merge --subject "$(printf "%s" "$(git log -1 --format=%s)")" 42'; called "42"
+export STUB_SHA=deadbeef
+unset STUB_LOG
+# Their twins without a record stay blocked...
+check 2 $N Bash 'gh pr merge -t "$(git log -1 --format=%s)" 42 --squash'
+check 2 $N Bash 'gh pr merge -t $(git log -1 --format=%s) 42'
+# ...and a substitution that does run gh is still code.
+check 2 $N Bash 'x="$(gh pr create --fill)"'
+check 2 $N Bash 'echo $(gh pr merge 5)'
+check 2 $N Bash 'echo `gh pr merge 5`'
+check 2 $N Bash "bash -c 'gh pr merge 5'"
+
+# --- Round 5: what the round-4 accuser found in that fix -------------------
+export STUB_SHA=$OK_SHA STUB_LOG="$T/gh.log"
+: >"$T/gh.log"
+# A PR number the gate cannot read is blocked, even when the current
+# branch's PR has a record (it used to check that one instead).
+check 2 $O Bash 'gh pr merge $(cat .pr-number) --squash'
+check 2 $O Bash 'gh pr merge "$(jq -r .number pr.json)"'
+check 2 $O Bash 'gh pr ready `cat .pr`'
+check 2 $O Bash 'gh pr merge $((40+2))'
+check 2 $O Bash 'gh pr merge "$PR" --squash'
+check 2 $O Bash 'gh pr merge $PR'
+# ...while a literal number with a substitution elsewhere still works.
+STUB_WANT="7" check 0 $O Bash 'gh pr merge 7 -t "$(cd sub && git log -1 --format=%s)"'; called "7"
+STUB_WANT="7" check 0 $O Bash 'gh pr merge 7 -t $(cd sub && git log -1 --format=%s)'; called "7"
+unset STUB_LOG
+export STUB_SHA=deadbeef
+# Prose that names gh next to an innocent substitution is not a command.
+check 0 $N Bash 'git commit -m "docs: explain gh pr merge ($(date +%F))"'
+check 0 $N Bash 'echo "run gh pr create after $(date)"'
+# ...but a substitution that runs gh inside a message still counts.
+check 2 $N Bash 'echo "created: $(gh pr create --fill)"'
+# Going back to the repository root with a substitution is resolved, not
+# read as a literal path; its twin without a record stays blocked.
+mkdir -p "$O/sub" "$N/sub"
+STUB_SHA=$OK_SHA STUB_WANT="12" check 0 "$O/sub" Bash 'cd "$(git rev-parse --show-toplevel)" && gh pr merge 12'
+STUB_SHA=$OK_SHA STUB_WANT="12" check 0 "$O/sub" Bash 'cd $(git rev-parse --show-toplevel) && gh pr merge 12'
+check 2 "$N/sub" Bash 'cd "$(git rev-parse --show-toplevel)" && gh pr merge 12'
+# Deep nesting does not crash the hook (a crash is a non-blocking error).
+deep="gh pr merge 7 -t "$(printf '"$(echo %.0s' $(seq 5000))
+check 2 $N Bash "$deep"
+# (A quoted interpreter, "$SHELL" -c, is LOW by the threat model: treating
+# any quoted word as an interpreter blocked the searches below.)
+# ...and their innocent look-alikes, from the round-3 accuser.
+check 0 $N Bash 'grep -rc "gh pr merge" docs'
+check 0 $N Bash "node --check 'gh pr merge.js'"
+check 0 $N Bash 'rg -g "*.md" -c "gh pr create"'
+check 0 $N Bash 'grep --include "*.md" -rc "gh pr merge" .'
+check 0 $N Bash "grep \"foo\" -c 'gh pr merge' f"
+check 0 $N Bash "find docs -name \"*.md\" -exec grep -c 'gh pr merge' {} +"
+check 0 $N Bash "perl -pe 's/gh pr create/x/' f"
+check 0 $N Bash "perl -i -pe 's/gh pr merge 5/x/' docs.md"
+check 0 $N Bash "perl -ne 'print if /gh pr merge/' f"
+check 0 $N Bash "ruby -ne 'puts \$_ if /gh pr merge 5/' f"
+check 0 $N Bash "python3 tool.py -vc 'gh pr merge 5'"
+check 0 $N Bash "psql -c 'select 1' -c \"gh pr merge 5\""
+unset STUB_LOG
 
 # --- Other hosts' input shapes ----------------------------------------------
 hostcheck() { # expected host json
