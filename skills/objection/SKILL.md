@@ -54,6 +54,8 @@ only what you cannot read from the repository:
   always runs on code, so this list can start empty.
 - `budget` (optional): `lean`, `standard` (default) or `thorough`. See
   "Token budget".
+- `precedents` (optional, default `true`): keep and use the repository's
+  precedents (step 1 and step 5). `false` turns them off.
 
 Then install a gate, and tell the user which one you installed:
 
@@ -152,6 +154,12 @@ The cast comes from "Token budget" above. By default:
 Give each accuser the review diff restricted to its files and the goal
 of the change in one sentence.
 
+**Precedents.** Unless `precedents` is `false`, run
+`node <this skill's directory>/precedents.mjs match <changed files>` and
+put its output (at most 10 lines) in the accuser's prompt as "Defects
+this repository has already shipped: check these first." Nothing printed,
+nothing added.
+
 **Rules that go into every accuser's prompt:**
 
 - Each finding has a severity (BLOCKER, HIGH, MEDIUM, LOW), `file:line`,
@@ -214,7 +222,26 @@ Write the record to a scratch file, with these exact sections:
 VERDICT: APPROVED
 ```
 
-APPROVED only with no BLOCKER or HIGH under "Open". Then:
+APPROVED only with no BLOCKER or HIGH under "Open".
+
+**Update the precedents** (unless `precedents` is `false`), before
+stamping. Only findings the judge kept (UPHELD, fixed or left open) of
+severity MEDIUM or above; refuted findings never become precedent.
+
+1. `node <this skill's directory>/precedents.mjs list`
+2. For each kept finding: if a listed line describes the same kind of
+   defect, `precedents.mjs bump <n> --sha <sha7>`. Otherwise
+   `precedents.mjs add --area <prefix> --pattern "<sentence>" --sha <sha7>`,
+   where `<prefix>` is the narrowest directory covering where it happened
+   (`*` if it is not about a place) and `<sentence>` names the **kind** of
+   defect, not the instance: "temp dir not cleaned when the job fails
+   before finally", not "line 42 of ingest.ts". No code, no secrets, no
+   names of people.
+3. Commit `.objection/precedents.md` on the branch
+   (`chore(objection): update precedents`). The script caps the file at 30
+   lines, so it stays cheap to read.
+
+Then stamp the resulting HEAD:
 
 ```bash
 bash <this skill's directory>/stamp.sh <record.md> origin/<base>

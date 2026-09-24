@@ -17,6 +17,7 @@ Instructions for any AI agent (and human) changing this repository.
 | path | what |
 |---|---|
 | `skills/objection/` | the skill, self-contained: `SKILL.md`, `roles/`, `stamp.sh`, `gate/`, `templates/` |
+| `skills/objection/precedents.mjs` | keeps `.objection/precedents.md` (confirmed defects, capped) |
 | `skills/objection/gate/core.mjs` | the gate logic, tool-neutral |
 | `skills/objection/gate/hook.mjs` | pre-tool hook adapter (Claude Code, Codex, Gemini CLI, Cursor) |
 | `skills/objection/gate/check-pr.mjs` | the GitHub check (`action.yml`) |
@@ -30,6 +31,7 @@ Instructions for any AI agent (and human) changing this repository.
 bash test/gate.test.sh
 bash test/check-pr.test.sh
 bash test/roles-in-sync.test.sh
+bash test/precedents.test.sh
 claude plugin validate .
 ```
 

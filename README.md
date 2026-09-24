@@ -170,6 +170,25 @@ heredoc bodies).
 defender, found 10 more. Every one is a regression case in
 [`test/gate.test.sh`](test/gate.test.sh).
 
+## Precedents
+
+After each debate, the defects that survived the defense are distilled
+into `.objection/precedents.md`, one line each, with how many times the
+repository has made that kind of mistake:
+
+```
+- [3x, 2026-09-23, a1b2c3d] apps/worker/: temp dir not cleaned when the job fails before finally
+- [2x, 2026-09-20, 9f8e7d6] *: constant measured on a small case reused on a large one
+```
+
+The next accuser gets the lines that cover the files being changed (at
+most 10), so the mistake that already came back as a `fix:` twice is
+the first thing it looks for. A small script does the bookkeeping
+(counting, dating, capping at 30 lines) instead of a model rewriting the
+file, and refuted findings never become precedent. No vector database,
+no server: a text file in the repository, reviewed in the PR like any
+other change.
+
 ## Without subagents
 
 The debate works best when each role runs in its own context, so the
@@ -209,6 +228,7 @@ unless someone other than its author tried to break it.
 | Runtime downloads | none | hooks and MCP fall back to `npx …@latest` |
 | Hooks | one pre-tool hook, inert without `.objection.json` | on every Bash, Edit, compaction and stop |
 | Agents | 2 (accuser, defender) + yours | 100+ |
+| Memory | precedents: a capped text file in the repo, reviewed in PRs | vector memory (AgentDB) |
 
 ## Layout
 
@@ -218,6 +238,7 @@ skills/objection/            the skill, self-contained
   roles/accuser.md           prosecution
   roles/defender.md          defense
   stamp.sh                   validates and stores the record
+  precedents.mjs             keeps .objection/precedents.md
   gate/core.mjs              gate logic, tool-neutral
   gate/hook.mjs              local hook for Claude Code, Codex, Gemini CLI, Cursor
   gate/check-pr.mjs          GitHub check

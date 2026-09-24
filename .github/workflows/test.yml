@@ -14,6 +14,7 @@ jobs:
       - run: bash test/gate.test.sh
       - run: bash test/check-pr.test.sh
       - run: bash test/roles-in-sync.test.sh
+      - run: bash test/precedents.test.sh
   commits:
     runs-on: ubuntu-latest
     steps:
