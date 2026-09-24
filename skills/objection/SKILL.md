@@ -71,8 +71,11 @@ multiplies the cost, and the brief keeps the reading small.
 **Models.** The reviewers run on sonnet at effort medium; opus where an
 invariant or `strongPaths` matches, or under `thorough` (`models` and
 `strongPaths` in the config; `models.strongEffort` sets the strong tier's
-effort apart). `debate.sh` applies this; `OBJECTION_MODEL`
-and `OBJECTION_EFFORT` override it. Without the `claude` CLI, `review.sh`
+effort apart; the defender runs on `models.defender`, default sonnet;
+later rounds run the accuser at `models.laterEffort`, default low).
+`debate.sh` applies this; `OBJECTION_MODEL` overrides the accusers'
+model, `OBJECTION_DEFENDER_MODEL` the defender's, and `OBJECTION_EFFORT`
+every effort. Without the `claude` CLI, `review.sh`
 runs the roles through the `codex` CLI when that is installed.
 
 **One brief per round.** Run `bash <this skill's directory>/brief.sh
