@@ -357,6 +357,16 @@ runs=$(awk -v b="$(git rev-parse --abbrev-ref HEAD)" '$1 == b {print $2}' "$T/us
 [ "$runs" -ge 7 ] 2>/dev/null || fail "usage counted $runs runs, expected at least 7"
 bash "$USAGE" "$(git rev-parse --abbrev-ref HEAD)" | grep -qE '^total: [0-9]+ runs, [0-9]+ input' || fail "usage.sh <branch> has no total"
 bash "$USAGE" no-such-branch | grep -qF "no runs logged" || fail "an unknown branch is not reported"
+# --summary: the median is per branch (every run of a PR summed), not per run.
+U="$T/usage-sum"
+git init -q "$U" && mkdir -p "$U/.git/objection" && printf '%s\n' \
+  "2026-08-01T00:00:00Z	a	x	accuser	sonnet	1	1	0.10	ok" \
+  "2026-08-02T00:00:00Z	a	x	defender	sonnet	1	1	0.10	ok" \
+  "2026-09-01T00:00:00Z	b	y	accuser	sonnet	1	1	0.05	ok" \
+  "2026-09-02T00:00:00Z	c	z	accuser	sonnet	1	1	1.00	ok" >"$U/.git/objection/usage.log"
+sum=$(cd "$U" && bash "$USAGE" --summary)
+printf '%s\n' "$sum" | grep -qF 'per branch: 3 branches, median $0.200, mean $0.417, max $1.000' || fail "usage.sh --summary median is wrong ($sum)"
+printf '%s\n' "$sum" | grep -qE '^2026-08 +1 +2 +0\.200$' || fail "usage.sh --summary month row is wrong ($sum)"
 # Outside a repository: a message, not a raw git error.
 (cd "$T" && bash "$USAGE" 2>&1) >"$T/outside"
 rc=$?
@@ -423,6 +433,22 @@ printf '{"bases":["main"],"smallDiff":0}\n' >.objection.json && printf '2\n' >>a
 reset; bash "$DEBATE" main >/dev/null 2>&1
 grep -q "config .objection.json from the working copy (origin/main has none yet) sha256:" "$(git rev-parse --git-common-dir)/objection/record-$(git rev-parse HEAD).md" ||
   fail "the first PR's record does not name the working copy's config"
+# A node that does not run (a version manager's shim): said, not a silent 126.
+mkdir -p "$T/badnode" && printf '#!/bin/sh\necho "No version is set for command node" >&2\nexit 126\n' >"$T/badnode/node" && chmod +x "$T/badnode/node"
+rc=0; PATH="$T/badnode:$PATH" bash "$DEBATE" main >/dev/null 2>"$T/node-err" || rc=$?
+[ "$rc" = 2 ] || fail "a node that does not run did not exit 2 (got $rc)"
+grep -q "node does not run in this repository (No version is set" "$T/node-err" || fail "debate.sh does not say node does not run"
+# A diff over the large threshold is refused before any reviewer runs;
+# --large reviews it anyway.
+reset
+rc=0; OBJECTION_LARGE_DIFF=1 bash "$DEBATE" --force main >/dev/null 2>"$T/large-err" || rc=$?
+[ "$rc" = 5 ] || fail "a large diff did not exit 5 (got $rc)"
+[ -e "$T/ran-accuser" ] && fail "a large diff ran the accuser"
+grep -q "suggest splitting the PR" "$T/large-err" || fail "the large-diff refusal does not say what to do"
+reset
+OBJECTION_LARGE_DIFF=1 bash "$DEBATE" --large --force main >/dev/null 2>&1
+[ -e "$T/ran-accuser" ] || fail "--large did not review the large diff"
+
 # A rebase that keeps the diff: the APPROVED record carries over and no
 # reviewer runs, unless the base gained a commit in a changed file.
 K="$T/carry"
@@ -446,6 +472,10 @@ grep -q '^1. Open.$' "$d" || fail "the old rulings were not carried"
 # A git diff that fails while listing the changed files: not carried.
 mkdir -p "$T/badgit" && realgit=$(command -v git)
 printf '#!/bin/sh\ncase "$*" in *"--no-renames --name-only -z"*) exit 1;; esac\nexec "%s" "$@"\n' "$realgit" >"$T/badgit/git" && chmod +x "$T/badgit/git"
+# BSD xargs, on every platform: empty input runs nothing and exits 0 (GNU
+# xargs runs the command once, which would hide the bug on Linux).
+realxargs=$(command -v xargs)
+printf '#!/bin/sh\nf=$(mktemp) && cat >"$f"\n[ -s "$f" ] || { rm -f "$f"; exit 0; }\n"%s" "$@" <"$f"; rc=$?; rm -f "$f"; exit $rc\n' "$realxargs" >"$T/badgit/xargs" && chmod +x "$T/badgit/xargs"
 reset; PATH="$T/badgit:$PATH" bash "$DEBATE" main >/dev/null 2>&1
 [ -e "$T/ran-accuser" ] || fail "a failed git diff carried the record over"
 # The base gains a commit in a.js: the diff was not judged against it.

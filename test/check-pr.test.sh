@@ -5,7 +5,11 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CHECK="$ROOT/skills/objection/gate/check-pr.mjs"
 T=$(mktemp -d)
-trap 'rm -rf "$T"' EXIT
+# Git Bash's $$ is not a Windows process id that node can probe: there the
+# servers keep their 120 s timeout and the EXIT trap.
+case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) ;; *) export SUITE_PID=$$ ;; esac
+srv="" ghsrv=""
+trap 'kill $srv $ghsrv 2>/dev/null; rm -rf "$T"' EXIT
 
 HEAD=$(printf 'a%.0s' $(seq 40))
 OLD=$(printf 'b%.0s' $(seq 40))
@@ -182,6 +186,8 @@ const s = http.createServer((q, r) => {
   r.end(fs.readFileSync(process.argv[2]));
 }).listen(0, "127.0.0.1", () => fs.writeFileSync(process.argv[3], String(s.address().port)));
 setTimeout(() => process.exit(0), 120000);
+// Gone with the suite, even when it is killed: poll the shell that started it.
+if (process.env.SUITE_PID) setInterval(() => { try { process.kill(+process.env.SUITE_PID, 0); } catch { process.exit(0); } }, 500).unref();
 ' "$T/api.log" "$T/mr.json" "$T/port" &
 srv=$!
 for _ in $(seq 50); do [ -s "$T/port" ] && break; sleep 0.1; done
@@ -223,6 +229,8 @@ const s = http.createServer((q, r) => {
   r.end(fs.readFileSync(process.argv[1]));
 }).listen(0, "127.0.0.1", () => fs.writeFileSync(process.argv[2], String(s.address().port)));
 setTimeout(() => process.exit(0), 120000);
+// Gone with the suite, even when it is killed: poll the shell that started it.
+if (process.env.SUITE_PID) setInterval(() => { try { process.kill(+process.env.SUITE_PID, 0); } catch { process.exit(0); } }, 500).unref();
 ' "$T/files.json" "$T/ghport" &
 ghsrv=$!
 for _ in $(seq 50); do [ -s "$T/ghport" ] && break; sleep 0.1; done
