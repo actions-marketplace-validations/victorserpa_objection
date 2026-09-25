@@ -102,6 +102,56 @@ OBJECTION_RUNNER=gemini OBJECTION_GEMINI="$T/gemini" GEMINI_API_KEY= run && fail
 has "$T/err" "GEMINI_API_KEY is not set"
 OBJECTION_RUNNER=codex run
 [ $? = 2 ] || fail "an unknown runner did not exit 2"
+# comment: true posts one PR comment, then edits it; a failure to post
+# does not change the verdict.
+cat >"$T/gh" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$*" >>"$FAKE_DIR/gh-calls"
+prev=""; for a in "$@"; do [ "$prev" = --input ] && cp "$a" "$FAKE_DIR/gh-body"; prev="$a"; done
+case "$*" in
+  *--paginate*) [ -n "${FAKE_GH_LIST_FAIL:-}" ] && exit 1; printf '%s' "${FAKE_GH_EXISTING:-}"; exit 0 ;;
+  *PATCH*"comments/${FAKE_GH_FOREIGN:-none}"*) exit 1 ;;
+esac
+[ -n "${FAKE_GH_FAIL:-}" ] && exit 1
+exit 0
+STUB
+chmod +x "$T/gh"
+event "Add x" "$head"; answer BLOCKER
+rm -f "$T/gh-calls"
+OBJECTION_COMMENT=true OBJECTION_GH_BIN="$T/gh" GITHUB_REPOSITORY=o/r run && fail "a BLOCKER passed with a comment"
+grep -q -- "-X POST repos/o/r/issues/7/comments" "$T/gh-calls" || fail "no comment was posted ($(cat "$T/gh-calls"))"
+node -e 'const b = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).body; if (!b.startsWith("<!-- objection-review -->") || !b.includes("1 BLOCKER")) process.exit(1)' "$T/gh-body" || fail "the comment body is wrong"
+rm -f "$T/gh-calls"
+FAKE_GH_EXISTING=42 OBJECTION_COMMENT=true OBJECTION_GH_BIN="$T/gh" GITHUB_REPOSITORY=o/r run
+grep -q -- "-X PATCH repos/o/r/issues/comments/42" "$T/gh-calls" || fail "the existing comment was not edited"
+grep -q -- "-X POST" "$T/gh-calls" && fail "a second comment was posted"
+# A listing that fails posts nothing; a marked comment this token cannot
+# edit is skipped for the next one; an @name does not ping.
+rm -f "$T/gh-calls"
+FAKE_GH_LIST_FAIL=1 OBJECTION_COMMENT=true OBJECTION_GH_BIN="$T/gh" GITHUB_REPOSITORY=o/r run
+grep -qE -- "-X (POST|PATCH)" "$T/gh-calls" && fail "a comment was written after the listing failed"
+has "$T/err" "could not be listed"
+rm -f "$T/gh-calls"
+FAKE_GH_EXISTING="7
+42" FAKE_GH_FOREIGN=7 OBJECTION_COMMENT=true OBJECTION_GH_BIN="$T/gh" GITHUB_REPOSITORY=o/r run
+grep -q -- "-X PATCH repos/o/r/issues/comments/42" "$T/gh-calls" || fail "the editable comment was not used after a foreign one"
+grep -q -- "-X POST" "$T/gh-calls" && fail "a new comment was posted although one could be edited"
+printf '| BLOCKER | BUG | src/a.ts:3 | ask @octocat | read | p |\n' >"$T/answer"
+OBJECTION_COMMENT=true OBJECTION_GH_BIN="$T/gh" GITHUB_REPOSITORY=o/r run
+node -e 'const b = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).body; if (b.includes("@octocat") || !b.includes("@\u200boctocat")) process.exit(1)' "$T/gh-body" || fail "an @mention would ping"
+# Text past node's 64 KiB stdin chunk keeps its accents (setEncoding).
+node -e 'process.stdout.write("| LOW | BUG | src/a.ts:3 | " + "é".repeat(40000) + " | read | p |\n")' >"$T/answer"
+OBJECTION_COMMENT=true OBJECTION_GH_BIN="$T/gh" GITHUB_REPOSITORY=o/r run
+node -e 'const b = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).body; if (b.includes("\ufffd")) process.exit(1)' "$T/gh-body" || fail "a character split across stdin chunks was corrupted"
+# A comment that cannot even be written leaves the verdict alone.
+answer
+OBJECTION_COMMENT=true OBJECTION_GH_BIN="$T/gh" GITHUB_REPOSITORY= run || fail "no repository name failed a clean review"
+answer
+FAKE_GH_FAIL=1 OBJECTION_COMMENT=true OBJECTION_GH_BIN="$T/gh" GITHUB_REPOSITORY=o/r run || fail "a failed comment failed a clean review"
+has "$T/err" "the PR comment could not be posted"
+rm -f "$T/gh-calls"
+run
+[ -e "$T/gh-calls" ] && fail "a comment was posted without comment: true"
 event "Add x" "0000000000000000000000000000000000000000"
 run && fail "a stale head passed"
 has "$T/err" "pushed again?"
