@@ -10,7 +10,10 @@ fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 cat >"$T/claude" <<'STUB'
 #!/bin/bash
 cat >/dev/null
-node -e 'process.stdout.write(JSON.stringify({result: process.env.FAKE_ROW, usage: {input_tokens: 1, output_tokens: 1}, total_cost_usd: 0}))'
+# The defender runs with defender.md as its system prompt file.
+out=$FAKE_ROW
+case " $* " in *defender.md*) out=${FAKE_DEFENSE:-} ;; esac
+FAKE_OUT=$out node -e 'process.stdout.write(JSON.stringify({result: process.env.FAKE_OUT, usage: {input_tokens: 1, output_tokens: 1}, total_cost_usd: 0}))'
 STUB
 chmod +x "$T/claude"
 export OBJECTION_CLAUDE="$T/claude"
@@ -34,6 +37,22 @@ how() { FAKE_ROW="$2" bash "$ROOT/eval/run.sh" "$1" 2>/dev/null | awk -v n="$1" 
 # The clean change: a HIGH is a false alarm, a LOW is not.
 [ "$(score clean "| HIGH | BUG | src/format.js:1 | x | read | p |")" = FALSE-ALARM ] || fail "a HIGH on the clean change passed"
 [ "$(score clean "| LOW | BUG | src/format.js:1 | x | read | p |")" = PASS ] || fail "a LOW on the clean change failed"
+# EVAL_DEFENSE=1: a false alarm and a catch go to the defender, and the
+# line says what it ruled; a clean pass does not call it.
+def='| # | verdict | evidence | kind | sentence |
+|---|---|---|---|---|
+| 1 | REFUTED | src/format.js:1 | read | the old code did the same |'
+line=$(EVAL_DEFENSE=1 FAKE_DEFENSE="$def" FAKE_ROW="| HIGH | BUG | src/format.js:1 | x | read | p |" bash "$ROOT/eval/run.sh" clean 2>/dev/null | awk '$1 == "clean"')
+case "$line" in *"defense: 1 refuted, 0 upheld, 0 cannot verify"*) ;; *) fail "the defense on a false alarm was not reported ($line)" ;; esac
+# A catch goes to the defender too (review.sh passes the role with
+# --system-prompt-file, which is what the stub keys on).
+up='| # | verdict | evidence | kind | sentence |
+|---|---|---|---|---|
+| 1 | UPHELD | src/export.js:11 | read | nothing cleans it up |'
+line=$(EVAL_DEFENSE=1 FAKE_DEFENSE="$up" FAKE_ROW="$(printf "$row" 11 'x' 'p')" bash "$ROOT/eval/run.sh" missing-cleanup 2>/dev/null | awk '$1 == "missing-cleanup"')
+case "$line" in *"defense: 0 refuted, 1 upheld, 0 cannot verify"*) ;; *) fail "the defense on a catch was not reported ($line)" ;; esac
+line=$(EVAL_DEFENSE=1 FAKE_DEFENSE="$def" FAKE_ROW="NO FINDINGS" bash "$ROOT/eval/run.sh" clean 2>/dev/null | awk '$1 == "clean"')
+case "$line" in *defense:*) fail "the defender ran on a clean pass ($line)" ;; esac
 # No fixture ran: not a pass.
 bash "$ROOT/eval/run.sh" nosuch >/dev/null 2>&1
 [ $? = 2 ] || fail "an empty run did not exit 2"
