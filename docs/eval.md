@@ -22,8 +22,30 @@ draws a false alarm; another makes slugs drop accents, which leaves
 non-Latin titles empty exactly as the old code did. One more changes a
 function to return cents instead of dollars while a caller in an
 untouched file still multiplies by 100. It runs the accuser on each.
-Latest runs, all nineteen cases (every reviewer tool off, the diff
-numbered by line):
+**All 40 cases, five runs each, two model families (0.20).** 23 planted
+bugs, 8 clean changes and the 9 real bugs below, every reviewer tool off:
+
+| runner | planted bugs | false alarms | real bugs at the right severity | all bugs |
+|---|---|---|---|---|
+| claude sonnet, effort medium | 114 of 115 (java-sublist missed once) | 2 of 40, both on clean-py (the slug case) | 32 of 45 (71%); 39 of 45 at any severity | 146 of 160, 91% |
+| Gemini CLI default | 115 of 115 | 5 of 40: clean-sql (an `ORDER BY` said to need an index, twice), clean-java-log (a null that `Catalog` never returns, twice), clean-migration (once) | 34 of 45 (76%) | 149 of 160, 93% |
+
+Sonnet: about $0.58 of API price per 40-case run. The misses on real bugs
+are mostly the same cases on both: rails-532cd49 and cpython-bdba8ef, and
+redis-610eb26 rated MEDIUM by sonnet (Gemini rated it HIGH every time).
+
+clean-ts-default was not clean when it was first written: making `sep` a
+second parameter lets `dates.map(isoDay)` pass the array index as the
+separator. Gemini reported it in two runs; sonnet missed it in all five.
+Its first fix, an options object `{ sep }`, broke the same call at
+compile time in TypeScript (a `number` is not an options object), which
+the CI review caught. It now leaves `isoDay` as it was and adds
+`isoDayWith(d, sep)`; `[date].map(isoDay)` typechecks under `--strict`,
+and it passed 5 of 5 on each runner. Those runs replace its first results
+in the table. Every run's raw output, the
+re-runs included: [results/2026-09-25.md](../eval/results/2026-09-25.md).
+
+Earlier runs, the first nineteen cases:
 
 | runner | bugs caught | false alarms on the four clean changes | cost |
 |---|---|---|---|
