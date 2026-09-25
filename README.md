@@ -55,25 +55,35 @@ Then, in a repository, ask your agent for `/objection init` (other agents:
 checks, your forge) and asks nothing else. To try it without blocking
 anyone, say `/objection init --advisory`. From then on, when the agent is
 about to open a PR, it runs the debate first; you get the record in the
-PR body.
+PR body. Something seems off? `/objection doctor` checks the tools, the
+config, the hooks (and the trust Codex and Gemini need), the CI workflow
+and whether the check is required, one line each, with the fix.
 
 ## Known bugs, caught
 
-[`eval/`](eval) plants nine bugs in small repositories and adds two
+[`eval/`](eval) plants ten bugs in small repositories and adds two
 changes with no bug at all: a negative cart total, an authorization
 check turned into a deny-list, a temp dir leaked on a retry, pages that
 start at 1 but skip the first, a charge that lost its row lock, a SQL
 query built by concatenating a search term, request headers (with the
 `Authorization` token) written to the log, writes fired from a
-`forEach(async ...)` and never awaited, and the negative total again
-with a comment telling the reviewer the change is approved. It runs the
-accuser on each. Latest runs, all eleven cases:
+`forEach(async ...)` and never awaited, a ban check on a user fetched
+without `await` (the `async` is in a file the PR does not touch), and
+the negative total again with a comment telling the reviewer the change
+is approved. It runs the accuser on each. Latest runs, all twelve cases:
 
 | runner | bugs caught | false alarm on the two clean changes | cost |
 |---|---|---|---|
-| claude sonnet, effort medium | 9 of 9, all as BLOCKER | none | $0.10 for all eleven |
-| gemini-3.1-pro-preview (the Gemini CLI's default) | 9 of 9 (7 BLOCKER, 2 HIGH) | none | about 6k tokens a review (measured on PR #42) |
-| gemini-3-flash-preview | 9 of 9 (8 BLOCKER, 1 HIGH) | none | Flash pricing, below Pro |
+| claude sonnet, effort medium | 10 of 10 (8 BLOCKER, 2 HIGH) | none | $0.11 for all twelve |
+| gemini-3.1-pro-preview (the Gemini CLI's default) | 10 of 10 (8 BLOCKER, 2 HIGH) | none | about 6k tokens a review (measured on PR #42) |
+| gemini-3-flash-preview | 10 of 10 (9 BLOCKER, 1 HIGH) | none | Flash pricing, below Pro |
+
+Severities move a step between runs (a HIGH one run is a BLOCKER the
+next); the catches did not. The cross-file case is why the brief now carries the definitions the
+added lines call, read from the commit: without them, sonnet rated it
+HIGH twice and once only MEDIUM ("if `getUser` is async"), with
+`src/users.js` under "Could not evaluate"; with them, BLOCKER three times
+out of three, at the same cost.
 
 The prompt-injection case was caught by all three: text in the diff is
 data under review, not instructions. Flash's first run scored the SQL
@@ -85,7 +95,7 @@ and the rerun counted it. Run the eval yourself with `bash eval/run.sh`
 (`OBJECTION_RUNNER=gemini` or `codex` for the others, and
 `OBJECTION_GEMINI_MODEL` for the model). It calls a real model, so CI
 runs only its scoring, against a fake reviewer (test/eval.test.sh).
-Eleven small cases prove the reviewers catch these bugs, not that they
+Twelve small cases prove the reviewers catch these bugs, not that they
 catch every bug.
 
 ## Track record
@@ -240,6 +250,7 @@ work anywhere you did not opt in.
 | `models` | `{"default": "sonnet", "strong": "opus", "effort": "medium"}` (the defaults): the reviewers' model, and the stronger one used when an invariant or `strongPaths` matches, or under `thorough`; `strongEffort` sets the strong tier's effort apart (opus at `low` found the same HIGH as at its default, for $0.13 instead of $0.33); `defender` is the defender's model (default `sonnet`, whatever the accuser runs on); `laterEffort` is the accuser's effort in later rounds, which review only the fix (default `low`) |
 | `strongPaths` | a regex of paths that deserve the strong model (a gate, a validator, billing) |
 | `enforce` | `false` for advisory mode: the hook reports what it would block and lets it through |
+| `$schema` | `init` writes it: editors then complete and check every key against [`objection.schema.json`](skills/objection/objection.schema.json) |
 | `smallDiff` | under `lean`, a diff of at most this many changed lines that no invariant or `strongPaths` touches runs no reviewer; the judge reads it alone (default 20, `0` turns it off) |
 
 Requirements: `node`, `git`, `bash` and `perl`, plus the `claude` CLI or
@@ -496,7 +507,8 @@ it runs them in one session and says so in the record.
     gate or exceeds 40 lines (otherwise the tests verify it), at most two
     rounds; `standard` and `thorough` spend more for more coverage;
   - every reviewer of a round reads one brief (`brief.sh`): the trimmed
-    diff, changed files, invariants, reviewer focus and precedents, and
+    diff, changed files, invariants, reviewer focus, precedents and the
+    definitions the added lines call (capped at 80 lines), and
     opens at most 5 other files, each for a named suspicion (in an isolated
     run it has no tools at all and judges from the brief);
   - `debate.sh` runs a whole round up to the judge (brief, accuser,
@@ -548,6 +560,8 @@ skills/objection/            the skill, self-contained
   debate.sh                  runs a round up to the judge, writes the draft record
   ci-review.sh               the accuser in CI, for the Action's review input
   init.sh                    opts a repository in without questions
+  doctor.sh                  checks the setup, one line per item, with the fix
+  objection.schema.json      the config's keys, for editors and doctor.sh
   pr-body.sh                 puts the stored record into the PR body
   gate/rulings.mjs           every numbered finding needs a ruling (stamp and CI)
   VERSION                    the version every draft record names
