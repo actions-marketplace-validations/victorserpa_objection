@@ -399,6 +399,11 @@ rc=$?
 grep -q "cap is 2" "$T/cap-out" || fail "the cap message is missing ($(cat "$T/cap-out"))"
 [ -e "$T/ran-accuser" ] && fail "the accuser ran past the cap"
 bash "$DEBATE" --extra-round main >/dev/null 2>&1 || fail "--extra-round did not run the round"
+# The record says which round it was, and that this one ran past the cap.
+grep -q "^Round 3, past the cap of 2 (--extra-round" "$(git rev-parse --git-common-dir)/objection/record-$(git rev-parse HEAD).md" ||
+  fail "the extra round is not marked in the record"
+grep -q "^Round 2 of 2\.$" "$(git rev-parse --git-common-dir)/objection/record-$(git rev-parse HEAD~1).md" ||
+  fail "the round number is not in the record"
 printf '{"bases":["main"],"smallDiff":0,"maxRounds":5}\n' >.objection.json && git add . && gitc commit -q -m cfg && git update-ref refs/remotes/origin/main HEAD
 d="$(git rev-parse --git-common-dir)/objection/record-$(git rev-parse HEAD).md"
 printf '1\n' >>a.js && git add . && gitc commit -q -m next
@@ -408,6 +413,16 @@ sed -i.bak 's/TODO(judge).*/judged./' "$d" && rm -f "$d.bak"
 reset; bash "$DEBATE" main >/dev/null 2>&1 && fail "a judged record was debated again without --force"
 [ -e "$T/ran-accuser" ] && fail "the accuser ran over a judged record"
 bash "$DEBATE" --force main >/dev/null 2>&1 || fail "--force did not debate again"
+
+# The first PR after init: the base has no config yet, so the record names
+# the working copy's, as brief.sh does, instead of "config none".
+W="$T/first"
+git init -q "$W" && cd "$W" || exit 1
+printf '1\n' >a.js && git add . && gitc commit -q -m base && git update-ref refs/remotes/origin/main HEAD
+printf '{"bases":["main"],"smallDiff":0}\n' >.objection.json && printf '2\n' >>a.js && git add . && gitc commit -q -m first
+reset; bash "$DEBATE" main >/dev/null 2>&1
+grep -q "config .objection.json from the working copy (origin/main has none yet) sha256:" "$(git rev-parse --git-common-dir)/objection/record-$(git rev-parse HEAD).md" ||
+  fail "the first PR's record does not name the working copy's config"
 cd "$R" || exit 1
 
 if [ "$failures" = 0 ]; then echo "debate: all cases passed"; else echo "debate: $failures failure(s)"; exit 1; fi

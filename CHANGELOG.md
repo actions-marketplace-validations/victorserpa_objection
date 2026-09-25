@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Each record says which round it was ("Round 2 of 3."), and a round run
+  with `--extra-round` says it ran past the cap, so the human reading the
+  PR sees it. debate.sh prints the same line.
+- The CI review counts a finding row without a header as an answer only
+  when it has the whole row (severity, kind, file, defect, evidence,
+  proof): a refusal that quotes a short row no longer passes.
+- The first PR after init, while the base has no config yet, gets a
+  record that names the working copy's config instead of "config none",
+  as the brief already did.
+- brief.sh, stamp.sh and review.sh print a clean usage line when called
+  without arguments; `init.sh --help` prints its usage and exits 0.
+- README: run init on the default branch, so the config is not part of
+  the first reviewed diff.
+
 ## 0.17.0 (2026-09-24)
 
 **A security pass, and a round cap the script enforces.** Upgrade from
