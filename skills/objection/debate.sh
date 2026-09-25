@@ -36,7 +36,7 @@
 # OBJECTION_KEEP (default 10) of each kind; stamped records are kept.
 #
 # Exit codes are review.sh's: 3 means no claude CLI (run the roles as
-# subagents, SKILL.md step 1), 2 a missing tool, 1 a failed run. When
+# subagents, reference/manual-roles.md), 2 a missing tool, 1 a failed run. When
 # the defender fails, the draft is still written and summarised, and the
 # exit code is the defender's: rerun only the defense, not the round.
 set -eu
@@ -234,7 +234,7 @@ draft_head() {
 }
 draft_tail() {
   printf '\n## Judge\n\n'
-  printf 'TODO(judge): rule on every finding with the rules of SKILL.md step 3.\n'
+  printf 'TODO(judge): rule on every finding with the rules of the Judge section of SKILL.md.\n'
   printf '\n## Open\n\n'
   printf 'TODO(judge): what stays open, then OPEN: BLOCKER=<n> HIGH=<n>, then the VERDICT line.\n'
 }
@@ -295,6 +295,61 @@ while IFS="$(printf '\t')" read -r cmd rule; do
 done <<EOF_CHECKS
 $(sed -n 's/^<!-- objection-invariant-check: \(.*\) -->$/\1/p' "$header")
 EOF_CHECKS
+
+# A rebase or GitHub's "Update branch" gives the same diff a new SHA. When
+# an APPROVED record already judged exactly this diff (same patch-id,
+# against the same base) and the commits the base gained touch none of
+# the changed files, no reviewer runs: the old record is carried over and
+# the judge confirms it. A base commit in any changed file (either name
+# of a rename) or in the objection config, a failed invariant check,
+# --since, --force or OBJECTION_NO_CARRY=1: the full round runs.
+carried=""
+if [ -z "$since" ] && [ -z "$force" ] && [ -z "$check_rows" ] && [ -z "${OBJECTION_NO_CARRY:-}" ]; then
+  new_mb=$(git merge-base "origin/$base" HEAD 2>/dev/null || true)
+  new_pid=$( { git diff "$new_mb" HEAD 2>/dev/null || true; } | git patch-id --stable | cut -d' ' -f1)
+  if [ -n "$new_mb" ] && [ -n "$new_pid" ]; then
+    for old_rec in "$dir"/*.md; do
+      old=$(basename "$old_rec" .md)
+      case "$old" in *[!0-9a-f]* | "$sha") continue ;; esac
+      [ "${#old}" = 40 ] || continue
+      head -n 1 "$old_rec" | grep -qx "<!-- objection: sha=$old base=origin/$base -->" || continue
+      [ "$(grep '^VERDICT: ' "$old_rec" | tail -n 1)" = "VERDICT: APPROVED" ] || continue
+      git cat-file -e "$old^{commit}" 2>/dev/null || continue
+      old_mb=$(git merge-base "origin/$base" "$old" 2>/dev/null) || continue
+      git merge-base --is-ancestor "$old_mb" "$new_mb" 2>/dev/null || continue
+      [ "$(git diff "$old_mb" "$old" | git patch-id --stable | cut -d' ' -f1)" = "$new_pid" ] || continue
+      # Both names of a rename, and the objection config: a base commit
+      # that adds an invariant for these files changes the review too. A
+      # git that fails here is not "nothing touched".
+      changed_files=$(git diff --no-renames --name-only "$new_mb" HEAD) || continue
+      touched=$(printf '%s\n.objection.json\n.claude/objection.json\n' "$changed_files" | tr '\n' '\0' |
+        xargs -0 git log --format=%h "$old_mb..$new_mb" --) || continue
+      [ -z "$touched" ] || continue
+      carried="$old"
+      break
+    done
+  fi
+fi
+if [ -n "$carried" ]; then
+  gained=$(git rev-list --count "$old_mb..$new_mb")
+  {
+    draft_head
+    printf 'Budget: %s. Diff: %s...HEAD. Carried over from %s: the same diff (patch-id %s), now on a base that gained %s commit(s), none in the changed files. No reviewer ran.\n\n' \
+      "$budget" "$diff_base" "${carried:0:7}" "${new_pid:0:12}" "$gained"
+    [ -z "$checks" ] || printf 'Invariant checks:\n%s\n' "$checks"
+    # The old record from its Accusation on, with one line only the judge
+    # can remove.
+    awk '/^## Accusation$/ { p = 1 } p' "$dir/$carried.md" | awk '
+      { print }
+      /^## Judge$/ && !done { print ""; print "TODO(judge): confirm the rulings below still hold on the new base (run verify), then delete this line."; done = 1 }'
+  } >"$record"
+  echo "objection: $(git rev-parse --abbrev-ref HEAD) @ ${sha:0:7}, budget $budget, diff $diff_base...HEAD"
+  echo "$round_line"
+  echo "reviewers: skipped (same diff as the APPROVED ${carried:0:7}; the base gained $gained commit(s), none in the changed files)"
+  echo "draft record: $record"
+  echo "next: run verify, confirm the carried-over rulings, delete the TODO(judge) line, then stamp.sh."
+  exit 0
+fi
 
 # An exit 3 (no claude CLI) must reach the caller as 3, so no `|| exit 1`;
 # a check that already failed is said before leaving, or it is lost.
@@ -458,5 +513,5 @@ grep -qiE '^[[:space:]]*\|[[:space:]]*(#[[:space:]]*\|[[:space:]]*)?severity[[:s
   echo "warning: the accusation has no findings table and no NO FINDINGS line: read it before judging; it may not be a review."
 echo "defender: $defended"
 echo "draft record: $record"
-echo "next: judge each finding (SKILL.md step 3), replace the TODO(judge) lines, then stamp.sh."
+echo "next: judge each finding (the Judge section of SKILL.md), replace the TODO(judge) lines, then stamp.sh."
 exit "$rc"

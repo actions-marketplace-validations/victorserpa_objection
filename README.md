@@ -86,14 +86,14 @@ words, and the defender (`EVAL_DEFENSE=1`) upheld every catch:
 
 | runner | bugs caught | false alarm on the four clean changes | cost |
 |---|---|---|---|
-| claude sonnet, effort medium | 14 of 14 (12 BLOCKER, 2 HIGH) | none | $0.22 for all eighteen (accuser) |
+| claude sonnet, effort medium | 14 of 14 (12 BLOCKER, 2 HIGH) | none in that run; the slug case in 3 of 10 runs (below) | $0.22 for all eighteen (accuser) |
 | gemini-3.1-pro-preview (the Gemini CLI's default) | 14 of 14 (12 BLOCKER, 2 HIGH) | none | about 6k tokens a review (measured on PR #42) |
 | gemini-3-flash-preview (0.16, first twelve cases) | 10 of 10 (9 BLOCKER, 1 HIGH) | none of two | Flash pricing, below Pro |
 
 False alarms move too: on the slug case, sonnet flagged the empty slug
 as HIGH in 6 of 9 runs until both roles were told to rate what the
 change does (a defect the removed lines show the old code had is at most
-LOW); after that, 2 of 9. That is the defender's job in a real debate,
+LOW); after that, 3 of 10. That is the defender's job in a real debate,
 and one run in which the defender still upheld the alarm is why the
 judge, not the defender, has the last word.
 
@@ -331,7 +331,11 @@ jobs:
 
 A push changes the head SHA, so the check fails again until the new
 commits are debated and the body is updated. GitHub's *Update branch*
-button is a push too: it adds a merge commit, which needs its own round.
+button is a push too, and so is a rebase: the SHA changes. When the diff
+itself did not (same patch-id) and the base gained nothing in the
+changed files, `debate.sh` carries the APPROVED record over without
+running a reviewer, and the judge confirms it; otherwise it is a new
+round.
 
 **3. Independent review in CI (optional).** The record is written on the
 agent's machine, with your credentials, so an agent that sets out to
