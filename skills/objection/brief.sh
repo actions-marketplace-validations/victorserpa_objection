@@ -20,6 +20,11 @@
 # (the opt-in PR). A round-1 accuser caught the first version reading them
 # from the previous round's commit, which is the branch.
 set -eu
+# File names as they are (git quotes "src/á.ts" otherwise, and an
+# invariant's paths regex then never matches it). Appended to any git
+# config the environment already passes.
+_n="${GIT_CONFIG_COUNT:-0}"
+export "GIT_CONFIG_KEY_$_n=core.quotePath" "GIT_CONFIG_VALUE_$_n=false" "GIT_CONFIG_COUNT=$((_n + 1))"
 
 # Git Bash (Windows) rewrites an argument like "origin/main:file" as a
 # path list ("origin\\main;file"); these calls must reach git untouched.
@@ -49,6 +54,10 @@ out="$dest/brief-$sha.md"
 
 # Same noise filter as the review diff in SKILL.md.
 X=(-- . ':!*.lock' ':!*lock.json' ':!*lock.yaml' ':!*.snap' ':!*.min.*' ':!dist/**' ':!build/**' ':!**/generated/**')
+# OBJECTION_BRIEF_STRICT=1 (the CI review, a barrier): only lockfiles stay
+# out. Build output is what a JavaScript Action ships (dist/index.js), so
+# a PR that touched only dist/ used to pass with no reviewer.
+[ "${OBJECTION_BRIEF_STRICT:-}" = 1 ] && X=(-- . ':!*.lock' ':!*lock.json' ':!*lock.yaml')
 files=$(git diff --name-only "$diff_base"...HEAD "${X[@]}")
 [ -n "$files" ] || { echo "nothing to review between $diff_base and HEAD." >&2; exit 1; }
 
@@ -109,6 +118,9 @@ process.stdin.setEncoding("utf8").on("data", (c) => (raw += c)).on("end", () => 
   // verdicts as opus on a real round, for a quarter of the price. A later
   // round reviews only the fix: effort low (opus low found a known HIGH).
   process.stdout.write(`${word(m.defender, "sonnet")}\n@@SPLIT@@\n${word(m.laterEffort, "low")}\n@@SPLIT@@\n`);
+  // Round cap for debate.sh; empty means the budget default.
+  const mr = Number(cfg.maxRounds);
+  process.stdout.write(`${Number.isInteger(mr) && mr >= 1 ? mr : ""}\n@@SPLIT@@\n`);
   // Invariants with a verify command, when the diff touches their paths:
   // "command<TAB>rule" per line, for debate.sh to run before the reviewers.
   process.stdout.write((cfg.invariants || []).filter((i) => typeof i.verify === "string" && i.verify.trim() && matches(i.paths))
@@ -123,7 +135,8 @@ model_tier=$(section 6)
 small_diff=$(section 7)
 defender_model=$(section 8)
 later_effort=$(section 9)
-invariant_checks=$(section 10)
+max_rounds=$(section 10)
+invariant_checks=$(section 11)
 budget=$(section 4)
 
 precedents="none recorded for these files"
@@ -188,7 +201,7 @@ process.stdin.setEncoding("utf8").on("data", (d) => (diff += d)).on("end", () =>
     // ("getUser: async (").
     const re = `(function[*]?[[:space:]]+${n}|def[[:space:]]+${n}|func[[:space:]]+(\\([^)]*\\)[[:space:]]*)?${n}|fn[[:space:]]+${n}|^(export[[:space:]]+)?(const|let|var)[[:space:]]+${n}[[:space:]]*=|class[[:space:]]+${n}|^[[:space:]]*((public|private|protected|static|async|override)[[:space:]]+)*${n}[[:space:]]*\\([^)]*\\)[^;]*\\{)([^A-Za-z0-9_]|$)|${n}[[:space:]]*:[[:space:]]*(async[[:space:]]*)?(function|\\()`;
     let hits = [];
-    try { hits = execFileSync("git", ["grep", "-n", "-E", re, "HEAD", ...pathspec], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\n").filter(Boolean); } catch { continue; }
+    try { hits = execFileSync("git", ["grep", "-n", "-E", re, "HEAD", ...pathspec], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 20000, maxBuffer: 64 << 20 }).split("\n").filter(Boolean); } catch { continue; }
     // A test file defines its own helpers: only a change to tests reads them.
     hits = hits.map((h) => h.match(/^HEAD:(.+?):(\d+):(.*)$/))
       .filter((m) => m && !addedText.has(m[3].trim()) && (onlyTests || !isTest(m[1])));
@@ -196,9 +209,11 @@ process.stdin.setEncoding("utf8").on("data", (d) => (diff += d)).on("end", () =>
     for (const [, file, at] of hits) {
       if (defs >= 8 || lines >= 80) break;
       let body = [];
-      try { body = execFileSync("git", ["show", `HEAD:${file}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\n"); } catch { continue; }
+      try { body = execFileSync("git", ["show", `HEAD:${file}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 20000, maxBuffer: 64 << 20 }).split("\n"); } catch { continue; }
       const take = body.slice(Number(at) - 1, Number(at) - 1 + Math.min(12, 80 - lines));
-      out.push(`${file}:${at} (${n})\n\`\`\`\n${take.join("\n")}\n\`\`\``);
+      // Numbered like an excerpt: no line of the branch starts a line here.
+      const numbered = take.map((l, k) => `${String(Number(at) + k).padStart(5)}  ${l}`);
+      out.push(`${file}:${at} (${n})\n\`\`\`\n${numbered.join("\n")}\n\`\`\``);
       lines += take.length; defs++;
     }
   }
@@ -214,12 +229,16 @@ process.stdin.setEncoding("utf8").on("data", (d) => (diff += d)).on("end", () =>
   printf '<!-- objection-small-diff: %s -->\n' "${small_diff:-20}"
   printf '<!-- objection-defender: %s -->\n' "${defender_model:-sonnet}"
   printf '<!-- objection-later-effort: %s -->\n' "${later_effort:-low}"
+  [ -z "$max_rounds" ] || printf '<!-- objection-max-rounds: %s -->\n' "$max_rounds"
   if [ -n "$invariant_checks" ]; then
     printf '%s\n' "$invariant_checks" | sed 's/^/<!-- objection-invariant-check: /; s/$/ -->/'
   fi
   if [ -n "$reviewers" ]; then
     printf '%s\n' "$reviewers" | sed 's/^/<!-- objection-reviewer: /; s/$/ -->/'
   fi
+  # debate.sh reads markers only above this line: everything below quotes
+  # the branch under review.
+  printf '<!-- objection-header-end -->\n'
   printf '\n'
   printf 'Goal: %s\nScope: %s\n\n' "$goal" "$scope"
   printf '## Reading rules\n\n'

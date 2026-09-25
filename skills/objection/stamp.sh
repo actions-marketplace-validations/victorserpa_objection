@@ -15,11 +15,16 @@
 #   finding.
 #
 # The first line it writes is a stamp with the SHA and the base. The hook
-# only accepts stamped records, so a file dropped into .git/objection/ by hand
-# does not count. Nothing stops someone from stamping a made-up record: the
+# only accepts stamped records, so a file without the stamp does not count.
+# Nothing stops someone from stamping a made-up record: the
 # rule that the record comes out of the debate, not out of whoever wrote the
 # code, lives in SKILL.md. This is a process guard, not a security boundary.
 set -eu
+# File names as they are (git quotes "src/á.ts" otherwise, and an
+# invariant's paths regex then never matches it). Appended to any git
+# config the environment already passes.
+_n="${GIT_CONFIG_COUNT:-0}"
+export "GIT_CONFIG_KEY_$_n=core.quotePath" "GIT_CONFIG_VALUE_$_n=false" "GIT_CONFIG_COUNT=$((_n + 1))"
 
 record="${1:?usage: stamp.sh <record.md> [base]}"
 base="${2:-}"
@@ -62,7 +67,7 @@ esac
 git rev-parse --verify -q "$base" >/dev/null ||
   { echo "unknown base: $base (run git fetch origin)." >&2; exit 1; }
 
-files=$(git diff --name-only "$base"...HEAD)
+files=$(git diff --no-renames --name-only "$base"...HEAD)
 [ -n "$files" ] || { echo "nothing to debate between $base and HEAD." >&2; exit 1; }
 
 # A docs-only diff skips accusation and defense (see SKILL.md) but still
@@ -80,7 +85,10 @@ while IFS= read -r f; do
       AGENTS.md | CLAUDE.md | GEMINI.md | .objection.json | \
       */AGENTS.md | */CLAUDE.md | */GEMINI.md | */.objection.json | \
       agents/* | skills/*) docs_only=no ;;
-    *.md | docs/*) ;;
+    # Documentation by its extension only: a file under docs/ can be code
+    # (docs/conf.py, a site config) and ran as such. Not .txt:
+    # requirements.txt and CMakeLists.txt change what gets built.
+    *.md | *.mdx | *.rst | *.adoc) ;;
     *) docs_only=no ;;
   esac
 done <<<"$files"

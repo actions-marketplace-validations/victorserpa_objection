@@ -4,6 +4,16 @@
 #
 #   debate.sh [base] [goal] [scope]                    round 1
 #   debate.sh --since <commit> [base] [goal] [scope]   later rounds: the fix only
+#   --extra-round (before the rest)                    one round past the cap,
+#                                                      when the human asked for it
+#   --force                                            re-run a commit whose record
+#                                                      is already judged
+#
+# Rounds are capped: the base config's maxRounds, else 2 under lean and 3
+# otherwise. A round is a commit of this branch (since the base) that has
+# a draft or stamped record; the cap refuses a new one and says what to
+# do. Measured: a PR whose agent fixed every LOW finding went 8 rounds,
+# each one finding something in the previous fix.
 #
 # base: the branch the PR targets. Omitted (or not a branch on origin), it
 # is the config's defaultBase, and the first argument is the goal.
@@ -30,16 +40,27 @@
 # the defender fails, the draft is still written and summarised, and the
 # exit code is the defender's: rerun only the defense, not the round.
 set -eu
+# File names as they are (git quotes "src/á.ts" otherwise, and an
+# invariant's paths regex then never matches it). Appended to any git
+# config the environment already passes.
+_n="${GIT_CONFIG_COUNT:-0}"
+export "GIT_CONFIG_KEY_$_n=core.quotePath" "GIT_CONFIG_VALUE_$_n=false" "GIT_CONFIG_COUNT=$((_n + 1))"
 
 # Git Bash (Windows) rewrites an argument like "origin/main:file" as a
 # path list ("origin\\main;file"); these calls must reach git untouched.
 gitref() { MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' git "$@"; }
 
 since=""
-if [ "${1:-}" = --since ]; then
-  since="${2:?--since needs the commit of the previous round}"
-  shift 2
-fi
+extra=""
+force=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --since) since="${2:?--since needs the commit of the previous round}"; shift 2 ;;
+    --extra-round) extra=yes; shift ;;
+    --force) force=yes; shift ;;
+    *) break ;;
+  esac
+done
 # Physical paths: git reports the toplevel resolved (/private/var on macOS).
 here="$(cd "$(dirname "$0")" && pwd -P)"
 top="$(git rev-parse --show-toplevel)"
@@ -117,12 +138,19 @@ if [ -n "$since" ]; then
   goal="Round after a fix: hunt regressions from the fix first. Goal of the PR: $goal"
 fi
 brief=$(bash "$here/brief.sh" "$diff_base" "$goal" "$scope" "origin/$base")
+# Markers are read from the header only: brief.sh writes them above its
+# first "objection-header-end" line. The rest of the brief quotes the
+# branch under review (diff, definitions), so a marker planted there would
+# pick a reviewer or run an invariant check's command.
+header="$tmp/brief-header"
+sed '/^<!-- objection-header-end -->$/q' "$brief" >"$header"
+grep -qx '<!-- objection-header-end -->' "$header" || { echo "the brief has no header end marker: rebuild it with this version's brief.sh." >&2; exit 1; }
 
-budget=$(sed -n 's/^<!-- objection-budget: \([a-z]*\) -->$/\1/p' "$brief" | head -n 1)
+budget=$(sed -n 's/^<!-- objection-budget: \([a-z]*\) -->$/\1/p' "$header" | head -n 1)
 [ -n "$budget" ] || budget=lean
 # Model and effort: the brief's tier (from the base config) unless the
 # caller set OBJECTION_MODEL / OBJECTION_EFFORT.
-tier=$(sed -n 's/^<!-- objection-model: \(.*\) -->$/\1/p' "$brief" | head -n 1)
+tier=$(sed -n 's/^<!-- objection-model: \(.*\) -->$/\1/p' "$header" | head -n 1)
 set -- $tier
 tier_model="${1:-sonnet}"
 tier_effort="${2:-medium}"
@@ -133,7 +161,7 @@ defender_effort="$tier_effort"
 # A later round reviews only the fix: the accuser runs at the config's
 # laterEffort (default low); the defender keeps the round's effort.
 if [ -n "$since" ]; then
-  later=$(sed -n 's/^<!-- objection-later-effort: \([A-Za-z]*\) -->$/\1/p' "$brief" | head -n 1)
+  later=$(sed -n 's/^<!-- objection-later-effort: \([A-Za-z]*\) -->$/\1/p' "$header" | head -n 1)
   tier_effort="${later:-low}"
   tier_reason="$tier_reason, later round"
 fi
@@ -144,7 +172,7 @@ if [ -n "${OBJECTION_EFFORT:-}" ]; then
 fi
 # The defender's model: the config's models.defender (default sonnet),
 # whatever the accuser runs on; OBJECTION_DEFENDER_MODEL overrides it.
-defender_model=$(sed -n 's/^<!-- objection-defender: \([A-Za-z0-9._-]*\) -->$/\1/p' "$brief" | head -n 1)
+defender_model=$(sed -n 's/^<!-- objection-defender: \([A-Za-z0-9._-]*\) -->$/\1/p' "$header" | head -n 1)
 defender_model="${OBJECTION_DEFENDER_MODEL:-${defender_model:-sonnet}}"
 export OBJECTION_MODEL="$tier_model" OBJECTION_EFFORT="$tier_effort"
 sha=$(git rev-parse HEAD)
@@ -153,6 +181,28 @@ accusation="$dir/accusation-$sha.md"
 findings="$dir/findings-$sha.md"
 defense="$dir/defense-$sha.md"
 record="$dir/record-$sha.md"
+
+# A judged record for this commit is the session's work: a new run would
+# overwrite it and pay for the round again.
+if [ -f "$record" ] && ! grep -q 'TODO(judge)' "$record" && [ -z "$force" ]; then
+  echo "objection: ${sha:0:7} already has a judged record ($record); stamp it, or pass --force to debate it again." >&2
+  exit 1
+fi
+# The round cap: commits of this branch that already had a round.
+max_rounds=$(sed -n 's/^<!-- objection-max-rounds: \([0-9]*\) -->$/\1/p' "$header" | head -n 1)
+[ -n "$max_rounds" ] || { [ "$budget" = lean ] && max_rounds=2 || max_rounds=3; }
+done_rounds=0
+for c in $(git rev-list "origin/$base..HEAD" 2>/dev/null); do
+  [ "$c" = "$sha" ] && continue
+  { [ -f "$dir/record-$c.md" ] || [ -f "$dir/$c.md" ]; } && done_rounds=$((done_rounds + 1))
+done
+if [ "$done_rounds" -ge "$max_rounds" ] && [ -z "$extra" ]; then
+  cat >&2 <<EOF_CAP
+objection: this branch already had $done_rounds round(s), the cap is $max_rounds (maxRounds, or the $budget budget's default).
+Stop fixing and close the record: what is still open goes under "## Open" with its severity. MEDIUM and LOW ship with the record (track them in an issue); a BLOCKER or HIGH that is still open means the human decides. A further round runs only when the human asks for it: debate.sh --extra-round ...
+EOF_CAP
+  exit 4
+fi
 rm -f "$findings" "$defense"
 
 # The base config the rules came from, by content hash.
@@ -178,8 +228,8 @@ draft_tail() {
 # reviewer: the judge reads it and the verify step still runs. The
 # threshold is the base config's smallDiff (default 20; 0 turns it off),
 # or OBJECTION_SMALL_DIFF.
-lines=$(sed -n 's/^<!-- objection-lines: \([0-9]*\) -->$/\1/p' "$brief" | head -n 1)
-small=$(sed -n 's/^<!-- objection-small-diff: \([0-9]*\) -->$/\1/p' "$brief" | head -n 1)
+lines=$(sed -n 's/^<!-- objection-lines: \([0-9]*\) -->$/\1/p' "$header" | head -n 1)
+small=$(sed -n 's/^<!-- objection-small-diff: \([0-9]*\) -->$/\1/p' "$header" | head -n 1)
 [ -z "${OBJECTION_SMALL_DIFF:-}" ] || small="$OBJECTION_SMALL_DIFF"
 case "$small" in '' | *[!0-9]*) small=20 ;; esac
 if [ "$budget" = lean ] && [ "$brief_reason" = default ] && [ "$small" -gt 0 ] &&
@@ -228,7 +278,7 @@ while IFS="$(printf '\t')" read -r cmd rule; do
 "
   fi
 done <<EOF_CHECKS
-$(sed -n 's/^<!-- objection-invariant-check: \(.*\) -->$/\1/p' "$brief")
+$(sed -n 's/^<!-- objection-invariant-check: \(.*\) -->$/\1/p' "$header")
 EOF_CHECKS
 
 # An exit 3 (no claude CLI) must reach the caller as 3, so no `|| exit 1`;
@@ -245,7 +295,7 @@ rc=0
 # the answers already paid for are kept.
 accusers="generic"
 if [ "$budget" != lean ]; then
-  sed -n 's/^<!-- objection-reviewer: \(.*\) -->$/\1/p' "$brief" >"$tmp/reviewers"
+  sed -n 's/^<!-- objection-reviewer: \(.*\) -->$/\1/p' "$header" >"$tmp/reviewers"
   if [ -s "$tmp/reviewers" ]; then
     { printf '### generic\n\n'; cat "$accusation"; } >"$tmp/all"
     while IFS="$(printf '\t')" read -r agent focus; do
@@ -386,6 +436,10 @@ echo "objection: $(git rev-parse --abbrev-ref HEAD) @ ${sha:0:7}, budget $budget
 echo "model: $tier_model, effort $tier_effort ($tier_reason); defender $defender_model, effort $defender_effort"
 echo "accusers: $accusers"
 echo "findings: $(count BLOCKER) BLOCKER, $(count HIGH) HIGH, $(count MEDIUM) MEDIUM, $(count LOW) LOW"
+# An empty answer, a refusal or prose counts as zero rows: say so, since
+# "0 findings" would read as a clean review.
+grep -qiE '^[[:space:]]*\|[[:space:]]*(#[[:space:]]*\|[[:space:]]*)?severity[[:space:]]*\|' "$accusation" || grep -q 'NO FINDINGS' "$accusation" ||
+  echo "warning: the accusation has no findings table and no NO FINDINGS line: read it before judging; it may not be a review."
 echo "defender: $defended"
 echo "draft record: $record"
 echo "next: judge each finding (SKILL.md step 3), replace the TODO(judge) lines, then stamp.sh."

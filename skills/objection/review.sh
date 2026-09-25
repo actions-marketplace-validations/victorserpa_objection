@@ -44,6 +44,11 @@
 #      OBJECTION_EXCERPT_LINES (lines each side of a cited line, default 40),
 #      OBJECTION_EXCERPT_MAX (total excerpt lines, default 1500).
 set -eu
+# File names as they are (git quotes "src/á.ts" otherwise, and an
+# invariant's paths regex then never matches it). Appended to any git
+# config the environment already passes.
+_n="${GIT_CONFIG_COUNT:-0}"
+export "GIT_CONFIG_KEY_$_n=core.quotePath" "GIT_CONFIG_VALUE_$_n=false" "GIT_CONFIG_COUNT=$((_n + 1))"
 
 # Git Bash (Windows) rewrites an argument like "origin/main:file" as a
 # path list ("origin\\main;file"); these calls must reach git untouched.
@@ -216,20 +221,32 @@ process.stdout.write(lines.join("\n"));
 if [ "$runner" = gemini ]; then
   # Chosen explicitly (a reviewers entry with agent "gemini", or
   # OBJECTION_RUNNER=gemini), never picked automatically. The role replaces
-  # Gemini's system prompt (GEMINI_SYSTEM_MD); plan mode is read-only, the
-  # empty directory is the whole workspace, no extensions load, and
-  # --skip-trust keeps any project config (and its hooks) out. Verified
-  # live with Gemini CLI 0.61: zero tool calls, the answer in .response.
+  # Gemini's system prompt (GEMINI_SYSTEM_MD), the workspace is the empty
+  # directory, no extensions load. Plan mode alone is not enough: it lets
+  # a non-interactive run call exit_plan_mode, which switches to YOLO and
+  # a shell. So an admin policy (the top tier, above YOLO) denies every
+  # tool, MCP ones included. Verified live with Gemini CLI 0.61: list,
+  # read, shell and exit_plan_mode were all denied. A policy file Gemini
+  # cannot load only prints an error and runs without it, so that error,
+  # or any tool that did run, fails the review. --skip-trust trusts the
+  # empty directory; it has nothing to load.
+  printf '[[rule]]\ntoolName = "*"\ndecision = "deny"\npriority = 999\n\n[[rule]]\ntoolName = "*"\nmcpName = "*"\ndecision = "deny"\npriority = 999\n' >"$work/deny.toml"
   GEMINI_SYSTEM_MD="$role_file" run_limited "${OBJECTION_TIMEOUT:-900}" "$gemini_bin" \
-    -p "$prompt" -o json --approval-mode plan -e none --skip-trust \
+    -p "$prompt" -o json --approval-mode plan -e none --skip-trust --admin-policy "$work/deny.toml" \
     ${OBJECTION_GEMINI_MODEL:+-m "$OBJECTION_GEMINI_MODEL"} \
     <"$input" >"$out" 2>"$work/err" || failed
+  if grep -qi 'policy file error' "$work/err"; then
+    echo "objection: Gemini did not load the policy that denies its tools; the review is not trusted." >&2
+    failed
+  fi
   node -e '
 const fs = require("fs");
 const [, out, role, log, branch, head, label] = process.argv;
 let j;
 try { j = JSON.parse(fs.readFileSync(out, "utf8")); } catch { process.exit(1); }
 if (j.error || typeof j.response !== "string" || !j.response.trim()) process.exit(1);
+const ran = (j.stats && j.stats.tools && j.stats.tools.totalSuccess) || 0;
+if (ran > 0) { process.stderr.write(`objection: ${ran} Gemini tool call(s) ran despite the deny policy; the review is not trusted.\n`); process.exit(1); }
 let inTok = 0, outTok = 0;
 for (const m of Object.values((j.stats && j.stats.models) || {})) {
   const t = m.tokens || {};
@@ -249,16 +266,34 @@ if (log) {
 fi
 
 if [ "$runner" = codex ]; then
-  # Codex keeps read-only tools, so the prompt forbids using them; the
-  # prompt goes first on stdin (`codex exec -`), the material after it.
+  # A read-only sandbox still lets Codex read any file on the machine
+  # (~/.ssh, other projects' .env) and run read-only commands: verified
+  # live with codex-cli 0.156, where `cat` of a file outside the workspace
+  # ran and its content came back. So its tools are turned off (shell,
+  # exec, plugins, apps, hooks, sub-agents, web search), the user's config,
+  # rules and skills stay out, and no environment variable reaches a
+  # command. Verified live: the same request answered with no command run.
+  # Any tool item in the --json stream still fails the review. The prompt
+  # goes first on stdin (`codex exec -`), the material after it.
+  # A TOML basic string: an apostrophe in the path (a folder named
+  # "Victor's") broke the literal string used before.
+  role_toml=$(printf '%s' "$role_file" | sed 's/\\/\\\\/g; s/"/\\"/g')
   { printf '%s\n\n' "${prompt/You have NO tools: you cannot open files or run commands, so never pretend to./Do not run commands or open files.}"; cat "$input"; } >"$work/stdin"
   run_limited "${OBJECTION_TIMEOUT:-900}" "$codex_bin" exec --json -o "$work/last" \
-    --sandbox read-only --skip-git-repo-check \
-    -c "model_instructions_file='$role_file'" -c project_doc_max_bytes=0 \
+    --sandbox read-only --skip-git-repo-check --ephemeral --ignore-user-config --ignore-rules \
+    --disable shell_tool --disable unified_exec --disable multi_agent --disable plugins \
+    --disable apps --disable hooks \
+    -c 'web_search="disabled"' -c skills.include_instructions=false \
+    -c 'shell_environment_policy.inherit="none"' -c 'approval_policy="never"' \
+    -c "model_instructions_file=\"$role_toml\"" -c project_doc_max_bytes=0 \
     -c "model_reasoning_effort=\"$effort\"" \
     ${OBJECTION_CODEX_MODEL:+-m "$OBJECTION_CODEX_MODEL"} \
     - <"$work/stdin" >"$out" 2>"$work/err" || failed
   [ -s "$work/last" ] || failed
+  if grep -qE '"type":"(command_execution|mcp_tool_call|web_search|file_change)"' "$out"; then
+    echo "objection: Codex ran a tool although its tools are off; the review is not trusted." >&2
+    failed
+  fi
   # Usage from the last turn.completed event of the --json stream.
   node -e '
 const fs = require("fs");
