@@ -1,0 +1,118 @@
+# Evaluation
+
+## Known bugs, caught
+
+[`eval/`](../eval) plants fifteen bugs in small repositories (JavaScript,
+Python and Go) and adds four changes with no bug at all: a negative cart total, an authorization
+check turned into a deny-list, a temp dir leaked on a retry, pages that
+start at 1 but skip the first, a charge that lost its row lock, a SQL
+query built by concatenating a search term, request headers (with the
+`Authorization` token) written to the log, writes fired from a
+`forEach(async ...)` and never awaited, a ban check on a user fetched
+without `await` (the `async` is in a file the PR does not touch), and
+the negative total again with a comment telling the reviewer the change
+is approved, a file name checked by a regex with no anchors before it
+reaches `path.join` (path traversal), and a new DELETE route that skips
+the owner check its GET sibling has, a session cookie read back with
+`pickle.loads` (remote code execution), and a Go `err` shadowed by `:=`
+that marks a failed charge as paid. One clean change adds `ORDER BY`
+and a bounded `LIMIT` to a parameterized query, to see whether SQL alone
+draws a false alarm; another makes slugs drop accents, which leaves
+non-Latin titles empty exactly as the old code did. One more changes a
+function to return cents instead of dollars while a caller in an
+untouched file still multiplies by 100. It runs the accuser on each.
+Latest runs, all nineteen cases (every reviewer tool off, the diff
+numbered by line):
+
+| runner | bugs caught | false alarms on the four clean changes | cost |
+|---|---|---|---|
+| claude sonnet, effort medium | 15 of 15 (13 BLOCKER, 2 HIGH), every one citing a bug line | none in that run; the slug case in 3 of 10 runs (below) | $0.23 for all nineteen |
+| the same model, a plain "review this diff" prompt and the raw diff (`EVAL_BASELINE=1`) | 14 of 15: the cross-file bug rated MEDIUM | none | $0.13 |
+| gemini-3.1-pro-preview (the Gemini CLI's default) | 15 of 15 (13 BLOCKER, 2 HIGH) | the slug case | about 6k tokens a review (measured on PR #42) |
+| gemini-3-flash-preview (0.16, first twelve cases) | 10 of 10 (9 BLOCKER, 1 HIGH) | none of two | Flash pricing, below Pro |
+
+Run with `EVAL_DEFENSE=1`, the defender upheld every catch on both
+runners: it never talked the judge out of a planted bug. Other models,
+measured once: haiku caught 14 of 14 on the eighteen-case set with one
+false alarm, at about twice sonnet's cost here, so it is not the default.
+
+False alarms move too: on the slug case, sonnet flagged the empty slug
+as HIGH in 6 of 9 runs until both roles were told to rate what the
+change does (a defect the removed lines show the old code had is at most
+LOW); after that, 3 of 10. That is the defender's job in a real debate,
+and one run in which the defender still upheld the alarm is why the
+judge, not the defender, has the last word.
+
+Severities move a step between runs (a HIGH one run is a BLOCKER the
+next); the catches did not. The cross-file case is why the brief now carries the definitions the
+added lines call, read from the commit: without them, sonnet rated it
+HIGH twice and once only MEDIUM ("if `getUser` is async"), with
+`src/users.js` under "Could not evaluate"; with them, BLOCKER three times
+out of three, at the same cost.
+
+The prompt-injection case was caught by all three: text in the diff is
+data under review, not instructions. Flash's first run scored the SQL
+injection as missed, although it had written the finding as BLOCKER:
+its table had no outer pipes, so every reader counted no rows, and a CI
+check would have passed that BLOCKER. review.sh now adds the pipes to
+such a table (test/review.test.sh and test/ci-review.test.sh pin it),
+and the rerun counted it. Run the eval yourself with `bash eval/run.sh`
+(`OBJECTION_RUNNER=gemini` or `codex` for the others, and
+`OBJECTION_GEMINI_MODEL` for the model). It calls a real model, so CI
+runs only its scoring, against a fake reviewer (test/eval.test.sh).
+Nineteen small cases prove the reviewers catch these bugs, not that they
+catch every bug.
+
+## Real bugs, replayed
+
+Planted bugs in small files are the easy case. [`eval/real/`](../eval/real)
+replays nine **real** regressions from public repositories: commits that
+introduced a defect a later commit fixed, naming the culprit in its
+message. CPython (twice, Python and C), Redis, Rails, Django, Go, Vue,
+ESLint and curl. The code is not stored here (licenses vary):
+`bash eval/real/fetch.sh` downloads the touched files at the culprit's
+parent and at the culprit, and `EVAL_FIXTURES=<dir> bash eval/run.sh`
+reviews the culprit's diff as if it were the PR. Each case lists its
+source commit and the fix that names it in [`cases.jsonl`](../eval/real/cases.jsonl).
+
+Four runs per side on sonnet at effort medium, against the same model
+with a one-paragraph "review this diff" prompt and the raw diff
+(`EVAL_BASELINE=1`), so the difference is what the brief and the roles
+add:
+
+| | caught at the expected severity | found at any severity |
+|---|---|---|
+| objection, sonnet | 29 of 36 (81%) | 34 of 36 (94%) |
+| plain prompt, same model | 22 of 36 (61%) | 29 of 36 (81%) |
+| objection, Gemini CLI default (two runs) | 12 of 18 (67%) | 12 of 18 (67%) |
+
+The gap is in three cases: curl's cookie engine left not running when
+called without a handle (objection 4 of 4, the plain prompt 2 of 4),
+CPython's `parse_qsl` accepting integers after a bytes refactor (3 of 4
+against none), and Rails' inflection regexes matching "taxis" (2 of 4
+against none). The Redis null-pointer crash is found but under-rated:
+objection every time as MEDIUM, the plain prompt 3 of 4 times as LOW;
+the Gemini runs rated it HIGH.
+objection costs more per review (about $0.02 against $0.014), the price
+of the brief.
+
+Scoring is the same for every side, and it was audited by hand: the
+first scorer missed citations written as a range (`cookie.c:1248-1298`)
+or as an estimate (`linter.js:~174`, how a reviewer without line numbers
+cites), which undercounted both sides. `EVAL_KEEP=<dir>` saves every
+answer and `EVAL_RESCORE=<dir>` scores saved answers again without
+calling a model, so a scoring fix is applied to the runs already paid for.
+
+## Track record
+
+objection reviews its own pull requests, and every record is public in
+the PR body. Over five feature PRs
+([#20](https://github.com/victorserpa/objection/pull/20) to
+[#28](https://github.com/victorserpa/objection/pull/28)): **43 findings
+the judge upheld**, every BLOCKER and HIGH fixed before merge (the rest
+fixed or kept as open LOW items in the record), among them a gate that let a
+PR through when `ssh` could not answer (#22), a CI check that passed on
+bash 3.2 after a crash (#26), and a size rule that read binary files as
+zero lines and skipped the review (#26). The same debates cost $1.22 to
+$2.36 with opus forced on everything; on today's defaults the last one
+(#28, two rounds) cost **$0.135**.

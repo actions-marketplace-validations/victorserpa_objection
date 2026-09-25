@@ -443,6 +443,11 @@ d="$cdir/record-$(git rev-parse HEAD).md"
 grep -q "Carried over from ${old:0:7}" "$d" || fail "the draft does not say it was carried over"
 grep -q '^TODO(judge): confirm the rulings' "$d" || fail "the carried draft has no line for the judge"
 grep -q '^1. Open.$' "$d" || fail "the old rulings were not carried"
+# A git diff that fails while listing the changed files: not carried.
+mkdir -p "$T/badgit" && realgit=$(command -v git)
+printf '#!/bin/sh\ncase "$*" in *"--no-renames --name-only -z"*) exit 1;; esac\nexec "%s" "$@"\n' "$realgit" >"$T/badgit/git" && chmod +x "$T/badgit/git"
+reset; PATH="$T/badgit:$PATH" bash "$DEBATE" main >/dev/null 2>&1
+[ -e "$T/ran-accuser" ] || fail "a failed git diff carried the record over"
 # The base gains a commit in a.js: the diff was not judged against it.
 git checkout -q main && printf '0\n' >b.tmp && cat b.tmp a.js >a.new && mv a.new a.js && rm b.tmp && git add . && gitc commit -q -m "base touches a.js" && git update-ref refs/remotes/origin/main HEAD
 git checkout -q feat && gitc rebase -q main 2>/dev/null || { gitc rebase --abort; fail "test setup: rebase conflicted"; }
@@ -465,6 +470,33 @@ git checkout -q main && printf '{"bases":["main"],"smallDiff":0,"budget":"lean"}
 git checkout -q cfg && gitc rebase -q main 2>/dev/null || { gitc rebase --abort; fail "test setup: cfg rebase conflicted"; }
 reset; bash "$DEBATE" main >/dev/null 2>&1
 [ -e "$T/ran-accuser" ] || fail "a base config change carried the record over"
+# The base gains a precedent: not carried.
+git checkout -q -b prec main && printf '4\n' >>a.js && git add . && gitc commit -q -m prec-feat
+prec=$(git rev-parse HEAD)
+sed "s/$ren/$prec/" "$cdir/$ren.md" >"$cdir/$prec.md"
+git checkout -q main && mkdir -p .objection && printf -- '- src/: x (abc1234)\n' >.objection/precedents.md && git add . && gitc commit -q -m "base precedent" && git update-ref refs/remotes/origin/main HEAD
+git checkout -q prec && gitc rebase -q main 2>/dev/null || { gitc rebase --abort; fail "test setup: prec rebase conflicted"; }
+reset; bash "$DEBATE" main >/dev/null 2>&1
+[ -e "$T/ran-accuser" ] || fail "a base precedent carried the record over"
+# A file name with a newline (not on Windows, which refuses the name): the
+# base edits it, and the carry-over must still see it.
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN*) ;;
+  *)
+    nl='we
+ird.js'
+    git checkout -q main && seq 1 20 >"$nl" && git add . && gitc commit -q -m nl-base && git update-ref refs/remotes/origin/main HEAD
+    git checkout -q -b nlb main && printf '2\n' >>a.js && git add . && gitc commit -q -m nl-feat
+    printf '21\n' >>"$nl" && git add . && gitc commit -q -m nl-feat2
+    nlsha=$(git rev-parse HEAD)
+    sed "s/$ren/$nlsha/" "$cdir/$ren.md" >"$cdir/$nlsha.md"
+    # Far from the PR's hunk, so the diff (and its patch-id) is unchanged.
+    git checkout -q main && sed '1s/^1$/one/' "$nl" >"$nl.tmp" && mv "$nl.tmp" "$nl" && git add . && gitc commit -q -m nl-base2 && git update-ref refs/remotes/origin/main HEAD
+    git checkout -q nlb && gitc rebase -q main 2>/dev/null || { gitc rebase --abort; fail "test setup: nl rebase conflicted"; }
+    reset; bash "$DEBATE" main >/dev/null 2>&1
+    [ -e "$T/ran-accuser" ] || fail "a base edit to a file with a newline in its name carried the record over"
+    ;;
+esac
 cd "$R" || exit 1
 
 cd "$R" || exit 1

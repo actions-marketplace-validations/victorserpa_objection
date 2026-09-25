@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+- **Real bugs, replayed.** `eval/real/` lists nine regressions from
+  CPython, Redis, Rails, Django, Go, Vue, ESLint and curl, each a commit a
+  later fix names as the culprit; `eval/real/fetch.sh` downloads the
+  touched files (the code is not stored here) and `EVAL_FIXTURES=<dir>`
+  reviews each culprit as the PR. Over four runs on sonnet, objection
+  caught 81% at the expected severity (94% at any), against 61% (81%) for
+  the same model with a plain "review this diff" prompt.
+- The eval scorer reads a citation written as a range
+  (`cookie.c:1248-1298`, at most 60 lines) or an estimate (`linter.js:~174`),
+  which it had scored as misses on both sides; `EVAL_RESCORE=<dir>`
+  scores saved answers again without calling a model.
+- A new planted case: a function starts returning cents while a caller in
+  an untouched file still multiplies by 100.
+- **Fixed, fail-open:** a finding row written with no header and no
+  pipes around it (`BLOCKER | BUG | a.ts:6 | ...`) was counted by
+  nothing, so a BLOCKER written that way passed as no finding. review.sh
+  now gives such rows their pipes, as it already did for a table
+  without its outer pipes. Found by the baseline eval below.
+- `EVAL_BASELINE=1 bash eval/run.sh` runs the same model with a plain
+  "review this diff" prompt and the raw diff: what the brief and the
+  roles add is the difference. The eval scorer also reads rows without
+  their outer pipes.
+- The README is a quarter of its length: what objection is, the eval,
+  how to start. Configuration, gates, the record, the eval in full and
+  the limits moved to `docs/`.
+- The carry-over also refuses when the base gained a precedent
+  (`.objection/`), and reads file names NUL-separated, so a name with a
+  newline is still seen.
+- `pr-body.sh --update` right after a push waits a few seconds for
+  GitHub to report the new head, when the pushed branch already has it,
+  instead of refusing.
+- The clean SQL case in the eval no longer changes what callers get
+  (the base already had `LIMIT 50`): with an unbounded base, a reviewer
+  that flagged the new limit was right.
 - pr-body.sh folds the accusation and the defense under `<details>`
   ("Accusation and defense (N findings)"), so the PR shows the rulings,
   what is open and the verdict first. The section lines stay whole, and
