@@ -25,6 +25,9 @@
 #      GITHUB_SERVER_URL, GITHUB_TOKEN (to fetch), GITHUB_STEP_SUMMARY,
 #      OBJECTION_FAIL_ON (blocker, high or none; default blocker),
 #      OBJECTION_MODEL / OBJECTION_EFFORT (default sonnet, medium),
+#      OBJECTION_DEFENSE (true: a defender answers each BLOCKER, HIGH and
+#      MEDIUM, as advice shown with them; OBJECTION_DEFENDER_MODEL,
+#      default the accuser's),
 #      OBJECTION_COMMENT (true: the summary as one PR comment, kept up
 #      to date), OBJECTION_GH_BIN (default gh),
 #      OBJECTION_CI_REMOTE (the URL to fetch from; tests use a local one).
@@ -269,6 +272,89 @@ answered=yes
 grep -qiE '^[[:space:]]*\|[[:space:]]*(#[[:space:]]*\|[[:space:]]*)?severity[[:space:]]*\|' "$accusation" ||
   grep -qE '^[[:space:]]*\|([^|]*\|)?[[:space:]]*(BLOCKER|HIGH|MEDIUM|LOW)[[:space:]]*\|([^|]*\|){4,}' "$accusation" ||
   grep -qiE '^[[:space:]]*NO FINDINGS\.?[[:space:]]*$' "$accusation" || answered=""
+
+# The defense (OBJECTION_DEFENSE=true), as advice: every BLOCKER, HIGH
+# and MEDIUM goes to the defender in one call, and its answer is shown
+# under the findings. It never changes the check. Measured on 70 findings
+# a Gemini accuser made on the eval (sonnet defending): of 5 false alarms
+# it refuted none, proposed a lower severity for 2 and could not verify 2;
+# of 65 real ones it refuted one, the main row of caller-units, with a
+# refutation that cited a real line and said itself "not confirmed", and
+# upheld the other row of that bug while arguing for LOW. Honored, it would have
+# passed a real bug through the barrier, which costs more than a false
+# alarm. Without a judge, its answer is for the person reading.
+defense=""
+defense_line="No defense (defense: true adds one, as advice)."
+if [ "${OBJECTION_DEFENSE:-false}" = true ] && [ "$rc" = 0 ] && [ -n "$answered" ]; then
+  # Numbered like debate.sh: "| n | SEVERITY | ...", in the accusation too.
+  awk -F'|' '
+    function finding(s, w) {
+      sub(/^[[:space:]*_]+/, "", s)
+      if (!match(s, /^[A-Za-z]+/)) return 0
+      w = toupper(substr(s, 1, RLENGTH))
+      return w ~ /^(BLOCKER|HIGH|MEDIUM|LOW)$/ && substr(s, RLENGTH + 1) ~ /^([^A-Za-z-]|$)/
+    }
+    /^[[:space:]]*\|/ {
+      h = $2; gsub(/[[:space:]*_]/, "", h)
+      if (tolower(h) == "severity") { sub(/^[[:space:]]*\|/, "| # |"); print; head = 1; next }
+      if (head && $0 ~ /^[[:space:]]*\|[[:space:]:-]*\|/) { sub(/^[[:space:]]*\|/, "|---|"); print; head = 0; next }
+      head = 0
+      if (finding($2)) { sub(/^[[:space:]]*\|/, "| " ++n " |"); print; next }
+    }
+    { head = 0; print }' "$accusation" >"$work/numbered" && cp "$work/numbered" "$accusation"
+  {
+    printf '| # | severity | kind | file:line | defect | evidence | proof path |\n|---|---|---|---|---|---|---|\n'
+    awk -F'|' '
+      /^[[:space:]]*\|[[:space:]]*[0-9]+[[:space:]]*\|/ {
+        s = $3; sub(/^[[:space:]*_]+/, "", s)
+        if (match(s, /^[A-Za-z]+/) && toupper(substr(s, 1, RLENGTH)) ~ /^(BLOCKER|HIGH|MEDIUM)$/) print
+      }' "$accusation"
+  } >"$work/findings"
+  total=$(($(wc -l <"$work/findings" | tr -d ' ') - 2))
+  if [ "$total" -gt 0 ]; then
+    defense="$work/defense.md"
+    drc=0
+    OBJECTION_MODEL="${OBJECTION_DEFENDER_MODEL:-$OBJECTION_MODEL}" \
+      env "${strip[@]}" bash "$here/review.sh" defender "$brief" "$work/findings" >"$defense" || drc=$?
+    if [ "$drc" != 0 ]; then
+      defense_line="Defense: the defender did not run (exit $drc)."
+      : >"$defense"
+    else
+      # A proposal counts as lower only below the accused severity.
+      tally=$(awk -F'|' '
+        BEGIN { rank["BLOCKER"] = 3; rank["HIGH"] = 2; rank["MEDIUM"] = 1; rank["LOW"] = 0 }
+        NR == FNR {
+          if ($0 ~ /^[[:space:]]*\|[[:space:]]*[0-9]+[[:space:]]*\|/) {
+            id = $2; gsub(/[^0-9]/, "", id); s = toupper($3); gsub(/[^A-Z]/, "", s); sev[id] = s
+          }
+          next
+        }
+        /^[[:space:]]*\|[[:space:]]*[0-9]+[[:space:]]*\|/ {
+          id = $2; gsub(/[^0-9]/, "", id)
+          if (!(id in sev) || seen[id]++) next
+          v = toupper($3); n++
+          p = ""
+          if (match(v, /PROPOSE[^A-Z]*(BLOCKER|HIGH|MEDIUM|LOW)/)) { p = substr(v, RSTART, RLENGTH); sub(/.*[^A-Z]/, "", p) }
+          if (v ~ /REFUTED/) r++
+          else if (v ~ /CANNOT/) c++
+          else if (v ~ /UPHELD/ && p != "" && rank[p] < rank[sev[id]]) l++
+          else if (v ~ /UPHELD/) u++
+          else o++
+        }
+        END { printf "%d\t%d refuted, %d upheld with a lower severity proposed, %d upheld, %d cannot verify%s", n + 0, r, l, u, c, (o ? ", " o " other" : "") }' "$work/findings" "$defense")
+      answered_n=${tally%%	*}
+      tally=${tally#*	}
+      if [ "$answered_n" = 0 ]; then
+        defense_line="Defense: the defender's answer has no verdict table, so it says nothing about these findings."
+      else
+        defense_line="Defense, as advice (it does not change the check): $answered_n of $total finding(s) answered: $tally."
+        case "$tally" in 0\ refuted,\ 0\ upheld\ with*) ;; *) defense_line="$defense_line On the eval it refuted one real bug: read each refutation or lower severity before you trust it." ;; esac
+      fi
+    fi
+  else
+    defense_line="Defense: no BLOCKER, HIGH or MEDIUM to defend."
+  fi
+fi
 verdict="passed"
 status=0
 if [ "$rc" != 0 ]; then
@@ -294,11 +380,15 @@ summary=$(
   [ "$runner" = gemini ] && accuser="gemini ${OBJECTION_GEMINI_MODEL:-(the CLI default model)}"
   printf '%s @ %s against %s. Accuser: %s, isolated. Fails on: %s.\n\n' \
     "$what" "${head:0:7}" "$base" "$accuser" "$fail_on"
-  printf 'Findings: %s BLOCKER, %s HIGH, %s MEDIUM, %s LOW. One reviewer, no defense and no judge: a finding here is a claim to check, not a verdict.\n\n' \
-    "$blocker" "$high" "$medium" "$low"
+  printf 'Findings: %s BLOCKER, %s HIGH, %s MEDIUM, %s LOW. No judge: a finding here is a claim to check, not a verdict.\n\n%s\n\n' \
+    "$blocker" "$high" "$medium" "$low" "$defense_line"
   # Model text, shown to people: an unclosed "<!--" would hide the rest of
   # the comment, and an image would make GitHub fetch a URL of its choice.
   sed 's/<!--/\&lt;!--/g; s/!\[/!\\[/g' "$accusation"
+  if [ -n "$defense" ] && [ -s "$defense" ]; then
+    printf '\n### Defense\n\n'
+    sed 's/<!--/\&lt;!--/g; s/!\[/!\\[/g' "$defense"
+  fi
 )
 summarise "$summary"
 # Never the verdict: whatever fails in comment() is a warning.
