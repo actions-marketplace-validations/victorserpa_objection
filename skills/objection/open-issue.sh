@@ -48,6 +48,10 @@ marker="<!-- objection-open: sha=$sha -->"
 pr_url=""
 command -v "$gh_bin" >/dev/null 2>&1 && pr_url=$("$gh_bin" pr view --json url -q .url 2>/dev/null || true)
 if [ -n "$branch" ]; then title="Open findings from $branch @ ${sha:0:7}"; else title="Open findings from commit ${sha:0:7}"; fi
+# GitHub refuses a body over 65536 characters: a long Open section is cut,
+# and the record stays whole in the PR.
+# Cut by character, not byte, so a cut never splits one.
+open=$(printf '%s' "$open" | node -e 'let s="";process.stdin.setEncoding("utf8").on("data",d=>s+=d).on("end",()=>{const c=[...s];process.stdout.write(c.length>60000?c.slice(0,60000).join("")+"\n\n(cut at 60000 characters: the full Open section is in the record in the PR body)":s)})')
 body="Findings the debate left open when this was approved (MEDIUM and LOW ship with the record; each one still deserves a decision).
 
 $open

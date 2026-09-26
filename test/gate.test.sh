@@ -153,6 +153,19 @@ check 2 $N mcp__ccd_pr__set_auto_merge ''
 check 0 $O Bash 'gh pr create --fill --base develop'
 check 0 $N Bash "cd $O && gh pr create --base develop"
 check 0 $N Bash "cd '$O' && gh pr create -B develop"
+# "cd" inside a quoted title is not a cd: allowed, as with any title
+# (it used to block as "cannot tell which directory").
+check 0 $O Bash 'gh pr create --base develop --title "fix: reads quoted cd targets; ok"'
+check 0 $N Bash "cd $O && gh pr create --base develop --title \"reads cd x; y\""
+check 0 $O Bash "gh pr create --base develop --title 'cd a; b'"
+# ...and the same title on a repository with no record still blocks.
+check 2 $N Bash 'gh pr create --base develop --title "fix: reads quoted cd targets; ok"'
+# A cd inside a quoted $( ) or backtick runs: it still blocks.
+check 2 $O Bash "echo \"\$(cd $N && gh pr create --base develop)\""
+check 2 $O Bash 'echo "`cd '"$N"' && gh pr create --base develop`"'
+# A quoted fake cd next to a real one: the real one decides, both ways.
+check 2 $T Bash "cd $N && gh pr create --base develop --title \"cd $O; x\""
+check 0 $T Bash "cd $O && gh pr create --base develop --title \"cd $N; x\""
 # A record debated against develop does not release a PR to master
 # (defaultBase in the config is master).
 check 2 $O Bash 'gh pr create --fill'
@@ -724,6 +737,12 @@ shrun_at() { # expected run-dir payload-cwd command
 shrun_at 2 "$T" "$O" "gh pr merge 5 --squash"
 shrun_at 2 "$T" "$T" "cd $O && gh pr merge 5 --squash"
 shrun_at 0 "$T" "$F" "gh pr merge 5 --squash"
+# A quoted cd target with a space (JSON-escaped quotes in the payload).
+git init -q "$T/sp ace" && optin "$T/sp ace"
+shrun_at 2 "$T" "$T" "cd \\\"$T/sp ace\\\" && gh pr merge 5 --squash"
+# A target that holds "cd " itself: only the leading cd is stripped.
+git init -q "$T/x cd y" && optin "$T/x cd y"
+shrun_at 2 "$T" "$T" "cd \\\"$T/x cd y\\\" && gh pr merge 5 --squash"
 shrun 0 "$F" "gh pr merge 5 --squash"
 shrun 2 "$O" "gh pr create --fill" cursor
 grep -q '"permission":"deny"' "$T/sh.out" || { echo "FAIL: hook.sh sent Cursor no deny"; failures=$((failures + 1)); }

@@ -1,7 +1,29 @@
 # Changelog
 
-## Unreleased
+## 0.21.0 (2026-09-25)
 
+- **GitLab review**, like the GitHub one: `ci-review.sh` runs in a merge
+  request job (`templates/gitlab/objection-review.gitlab-ci.yml`), reads
+  the merge request from GitLab's predefined variables, fetches
+  `refs/merge-requests/<iid>/head` without running it, and with
+  `OBJECTION_COMMENT` keeps the findings in one merge request note
+  (`OBJECTION_GITLAB_TOKEN`, api scope). Tested against a local stand-in
+  for the API, not yet on gitlab.com.
+- **Monorepo: one config per package.** `<dir>/.objection.json` adds
+  `verify`, `invariants`, `reviewers` and `strongPaths` for the changed
+  files under `<dir>/`, on top of the root config. Its `paths` are
+  relative to the package and its commands run from it; it is read from
+  the base like the root config, named by hash in the record, and
+  checked by `doctor.sh`.
+- **The gate no longer blocks a PR whose title says "cd".** A quoted
+  argument such as `--title "reads quoted cd targets; ok"` counted as a
+  `cd`, the counts disagreed, and the gate blocked with "cannot tell which
+  directory gh will run in" (it blocked this release's own PR). Only a
+  `cd` outside quotes counts now; one inside a quoted `$( )` still does.
+- `hook.sh` reads a quoted `cd "dir with space" && gh ...` target when
+  node cannot run (it missed it before).
+- `open-issue.sh` cuts an Open section past GitHub's body limit, with a
+  note that the full one is in the PR.
 - **The eval, measured in full**: 40 cases (23 planted, 8 clean, 9 real
   bugs), five runs each on Claude sonnet and on the Gemini CLI's default.
   Sonnet caught 91% of all bugs with 5% false alarms, meeting both v1.0
