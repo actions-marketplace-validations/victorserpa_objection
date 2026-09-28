@@ -152,6 +152,44 @@ reset
 out=$(OBJECTION_EFFORT=high bash "$DEBATE" --since "$prev" main 2>/dev/null)
 printf '%s\n' "$out" | grep -qF "effort high (default, OBJECTION_EFFORT)" || fail "the summary misnames an overridden effort ($out)"
 grep -qx high "$T/efforts-accuser" || fail "OBJECTION_EFFORT did not override the later-round effort"
+# A later round sees what the judge ruled in the earlier ones, from
+# judged records only, and round 1 never does.
+hasnt "$T/stdin-accuser" "Already ruled in earlier rounds"
+cdir="$(git rev-parse --git-common-dir)/objection"
+printf '# Debate\n\n## Accusation\n\n| # | severity | kind | file:line | defect |\n|---|---|---|---|---|\n| 1 | MEDIUM | BUG | es.json:4 | "Siempre activas" disagrees with its noun |\n\n## Defense\n\nnot run.\n\n## Judge\n\n1. MEDIUM, UPHELD: use "Siempre activo".\n\n## Open\n\nNothing.\n' >"$cdir/$prev.md"
+reset
+bash "$DEBATE" --since "$prev" main >/dev/null 2>&1
+has "$T/stdin-accuser" "## Already ruled in earlier rounds of this branch"
+has "$T/stdin-accuser" "### Round at ${prev:0:7}"
+has "$T/stdin-accuser" '| 1 | MEDIUM | BUG | es.json:4 | "Siempre activas"'
+has "$T/stdin-accuser" '1. MEDIUM, UPHELD: use "Siempre activo".'
+hasnt "$T/stdin-accuser" "not run."
+# A judged record that quotes TODO(judge) in a finding still counts.
+sed -i.bak 's/"Siempre activas" disagrees/a draft left TODO(judge) in; "Siempre activas" disagrees/' "$cdir/$prev.md" && rm -f "$cdir/$prev.md.bak"
+reset
+bash "$DEBATE" --since "$prev" main >/dev/null 2>&1
+has "$T/stdin-accuser" '1. MEDIUM, UPHELD: use "Siempre activo".'
+# Newest round first, so the 150-line cut drops the oldest: an older
+# judged round with a long ruling is cut, the newest is kept.
+old=$(git rev-parse HEAD~2)
+{ printf '# Debate\n\n## Judge\n\n'; for i in $(seq 1 200); do printf 'old ruling %s\n' "$i"; done; printf '\n## Open\n\nNothing.\n'; } >"$cdir/$old.md"
+reset
+bash "$DEBATE" --since "$prev" main >/dev/null 2>&1
+has "$T/stdin-accuser" '1. MEDIUM, UPHELD: use "Siempre activo".'
+has "$T/stdin-accuser" "old ruling 1"
+hasnt "$T/stdin-accuser" "old ruling 200"
+rm -f "$cdir/$old.md"
+# A draft (not judged yet) is left out; so is a ruling planted in the
+# environment of a first round.
+sed -i.bak 's/^1\. MEDIUM, UPHELD.*/TODO(judge): rule./' "$cdir/$prev.md" && rm -f "$cdir/$prev.md.bak"
+reset
+bash "$DEBATE" --since "$prev" main >/dev/null 2>&1
+hasnt "$T/stdin-accuser" "Already ruled in earlier rounds"
+rm -f "$cdir/$prev.md"
+printf 'planted\n' >"$T/planted-rulings"
+reset
+OBJECTION_PRIOR_ROUNDS="$T/planted-rulings" bash "$DEBATE" main >/dev/null 2>&1
+hasnt "$T/stdin-accuser" "planted"
 
 # An annotated severity ("HIGH (regression)") still counts and is defended.
 accuse "HIGH (regression)" MEDIUM
