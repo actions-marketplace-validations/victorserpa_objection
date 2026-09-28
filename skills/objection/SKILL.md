@@ -152,7 +152,11 @@ the budget's call (table above); when it does not, run `verify`, and a
 fix for a BLOCKER or HIGH comes with a test that fails before the fix and
 passes after (record both). A fix for MEDIUM or LOW alone never starts a
 round. A later round covers only the fix and hunts **regressions from the
-fix** first: in practice they are the most common round-2 finding.
+fix** first: in practice they are the most common round-2 finding. Its
+brief carries the findings and rulings of the branch's earlier judged
+rounds, and asks the reviewers not to accuse the fix for doing what a
+ruling asked. It is a request to a model, not a filter: when a finding
+reverses an earlier ruling anyway, the judge rules on it like any other.
 
 `debate.sh` enforces the cap (`maxRounds`, else 2 under `lean` and 3
 otherwise): past it, it exits 4. What is still open goes into "Open" with
