@@ -30,7 +30,10 @@ import { missingRulings } from "./rulings.mjs";
 const gitlab = !!process.env.GITLAB_CI;
 
 function fail(msg) {
-  if (!gitlab) console.log(`::error title=objection::${msg}`);
+  // Escaped as the Actions docs ask: a message can quote the PR body, and
+  // a raw newline there would start a workflow command of its own.
+  const esc = msg.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  if (!gitlab) console.log(`::error title=objection::${esc}`);
   console.error(`objection: ${msg}`);
   process.exit(1);
 }
@@ -206,8 +209,18 @@ const docsOnly =
 
 const lines = record.split("\n");
 if (!docsOnly) {
-  for (const section of ["## Accusation", "## Defense", "## Judge", "## Open"])
-    if (!lines.includes(section)) fail(`the record is missing the section "${section}".`);
+  for (const section of ["## Accusation", "## Defense", "## Judge", "## Open"]) {
+    if (lines.includes(section)) continue;
+    // Measured on an adopter's PR: the agent pasted the record by hand
+    // with "## Accusation (round 2)", the stamp had passed on the file,
+    // and the check read as a broken gate. Say what to do instead.
+    const near = lines.find((l) => l.trimEnd().toLowerCase().startsWith(section.toLowerCase()));
+    fail(
+      near
+        ? `the record has ${JSON.stringify(near)} where the heading must be exactly "${section}". Do not edit the record in the PR body by hand: regenerate the body with pr-body.sh --update.`
+        : `the record is missing the section "${section}". Put the record in the PR body with pr-body.sh (--update for an open PR), not by hand.`,
+    );
+  }
 }
 
 // Only records drafted by 0.13 or later (they name the version): a record
