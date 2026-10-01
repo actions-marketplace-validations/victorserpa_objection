@@ -71,13 +71,22 @@ esac
 git rev-parse --verify -q "$base" >/dev/null ||
   { echo "unknown base: $base (run git fetch origin)." >&2; exit 1; }
 
+# HEAD already in the base (a stale or wrong base, a branch merged
+# already) also gives an empty diff: that is not a merge to approve.
+if git merge-base --is-ancestor HEAD "$base"; then
+  echo "HEAD is already in $base: nothing to stamp (is the base right?)." >&2
+  exit 1
+fi
 files=$(git diff --no-renames --name-only "$base"...HEAD)
-[ -n "$files" ] || { echo "nothing to debate between $base and HEAD." >&2; exit 1; }
+# No file changes (a `merge -s ours` that brings a branch's history in,
+# an empty commit): nothing goes into the base, so nothing is debated,
+# and the record needs only its verdict, like documentation. Refusing it
+# left an adopter's release merge with no way through but a human.
 
 # A docs-only diff skips accusation and defense (see SKILL.md) but still
 # needs a record saying so.
 docs_only=yes
-while IFS= read -r f; do
+[ -n "$files" ] && while IFS= read -r f; do
   case "$f" in
     # Agent prompts, skills, instructions and the objection config are how
     # the debate itself behaves: weakening the defender must not ship
