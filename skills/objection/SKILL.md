@@ -21,6 +21,9 @@ scripts there: `debate.sh` (one round), `stamp.sh` (validates and stores
 a record), `pr-body.sh` (puts it in the PR body), `open-issue.sh` (an
 issue for what stayed open), `init.sh`, `doctor.sh`,
 `precedents.mjs`, and `brief.sh` / `review.sh` (what `debate.sh` runs).
+Never pick the directory by listing a plugin cache: old versions stay
+there next to the current one. From 0.23.2 on, `debate.sh` and
+`stamp.sh` warn when they are an old copy; older copies cannot.
 
 ## init and doctor
 
