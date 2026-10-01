@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- A later round's brief lists the files the branch itself added (not on
+  the base branch), and says that editing, renaming or renumbering one
+  changes nothing the base shipped. An adopter's reviewers raised five
+  BLOCKERs "a shipped migration was rewritten", all refuted, all about
+  migrations an earlier round of the same branch had added.
+- A commit that changes no file (a `merge -s ours` that brings another
+  branch's history in) stamps with a verdict-only record, and the GitHub
+  check accepts it when the PR lists zero changed files. Before,
+  `stamp.sh` refused it ("nothing to debate") and the gate then blocked
+  the PR, so an adopter's release merge could only go through a human.
 - **Eval: 15 more real bugs**, and the first nine overstated objection.
   Hand-graded, 4 runs per side on sonnet: objection rated 42% of them
   right and found 55%; a plain review prompt on the same model, 55% and
