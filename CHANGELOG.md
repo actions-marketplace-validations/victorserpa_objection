@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The gate no longer reads a redirection as the PR number ("could not
+  read the head SHA of PR 2>"), and `2>&1` or `&>` no longer ends the
+  command: a merge with `2>&1` before the number had the gate check the
+  current branch's PR while gh merged the numbered one. From an
+  adopter's hook log.
+- SKILL.md says never to pick the skill's directory by listing the
+  plugin cache, and from this version on `debate.sh` and `stamp.sh`
+  warn when they are an old copy with a newer version installed next to
+  it (copies already in the cache cannot). An adopter's
+  agent listed the cache with a plain `sort`, which puts 0.9.0 after
+  0.23.1, and stamped records with 0.9.0 for days.
 - A record heading edited by hand (`## Accusation (round 2)`) now fails
   with a message that names it and says to regenerate the body with
   `pr-body.sh --update`, in the CI check and in `stamp.sh`. Before, the
