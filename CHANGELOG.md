@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.24.3 (2026-10-13)
+
+- Fifteen fresh real regressions in the eval (2026-07 to 2026-09, from
+  repositories it had not used), measured after 0.24.2 shipped and not
+  used for tuning: 38 of 60 at the right severity against 24 for the
+  plain prompt, same day, same model, hand-graded (35 against 23 if
+  tailscale-027e249 counts only the first of the two defects its fix
+  repaired). The gap seen on the cases the brief was tuned on held.
+- The eval scorer says how a catch was read: `(line+words)`, `(words)`
+  or `(line only)`, and a run lists how many catches came from a bug
+  line alone, the ones to grade by hand. Rescored on every answer saved
+  since 2026-10-01, they are exactly the two cases the hand count had
+  overturned (netty-3c06dd6, nushell-0a0475e). Two real-bug patterns
+  were corrected: nushell-d271a05 missed catches phrased "starting with
+  `.`", and vite-1f068fc credited a run for a `ReferenceError` about
+  another variable.
+
+## 0.24.2 (2026-10-12)
+
+- The brief lists the other uses, in the changed files, of a code name
+  the diff uses less than before (at most 6 names and 40 lines, from
+  HEAD, outside the hunks; doc files and comments give no names). A change that moves one use of a field to a
+  new one and leaves the rest on the old one is now visible: on a real
+  Prometheus regression, found in 4 of 4 runs against none, measured
+  twice. Same day, same model, 15 real bugs: 52 of 60 at the right
+  severity against 47, with a broader first version (it also listed
+  names the diff started using); the narrowed one was measured again on
+  the four cases where its section appears, with the same result.
+
 ## 0.24.1 (2026-10-07)
 
 - The brief shows ten lines of context around each change, not three. A

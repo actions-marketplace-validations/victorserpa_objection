@@ -104,7 +104,11 @@ measured the same day on the same model (`claude-sonnet-5-5`), objection
 rated 80% of the runs right against 62% for a plain review prompt,
 mostly on the severe ones (a buffer overflow rated BLOCKER every time,
 never by the plain prompt), with false alarms on 2 of 36 clean reviews
-(the plain prompt: 2 of 18). 24 real bugs
+(the plain prompt: 2 of 18). On 15 fresh regressions not used for
+tuning ([results](eval/results/2026-10-13-fresh-real-bugs.md)): 63%
+against 40% (58% against 38% if one case counts only the first of the
+two defects its fix repaired), graded by hand by the session that
+tuned it. 39 real bugs
 are a small sample, and no number here says it catches everything. Scoring, every case and the history: [docs/eval.md](docs/eval.md).
 
 ## How it works
@@ -154,7 +158,7 @@ More, with measurements and when it is not worth it:
 | [docs/eval.md](docs/eval.md) | the eval: cases, scoring, results |
 | [docs/limits.md](docs/limits.md) | limits, costs, when it is worth it, how it compares |
 | [docs/layout.md](docs/layout.md) | where everything lives in this repository |
-| [CHANGELOG.md](CHANGELOG.md) | every release; pin `@v0.24.1` or a SHA instead of `@v1` to stay on one |
+| [CHANGELOG.md](CHANGELOG.md) | every release; pin `@v0.24.3` or a SHA instead of `@v1` to stay on one |
 
 ## License
 
