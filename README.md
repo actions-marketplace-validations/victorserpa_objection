@@ -108,7 +108,9 @@ never by the plain prompt), with false alarms on 2 of 36 clean reviews
 tuning ([results](eval/results/2026-10-13-fresh-real-bugs.md)): 63%
 against 40% (58% against 38% if one case counts only the first of the
 two defects its fix repaired), graded by hand by the session that
-tuned it. 39 real bugs
+tuned it and again blind by another model; on 8 more in Python, Rust
+and TypeScript, found in half the runs against a quarter
+([results](eval/results/2026-10-13-python-rust-ts.md)). 47 real bugs
 are a small sample, and no number here says it catches everything. Scoring, every case and the history: [docs/eval.md](docs/eval.md).
 
 ## How it works
@@ -158,7 +160,7 @@ More, with measurements and when it is not worth it:
 | [docs/eval.md](docs/eval.md) | the eval: cases, scoring, results |
 | [docs/limits.md](docs/limits.md) | limits, costs, when it is worth it, how it compares |
 | [docs/layout.md](docs/layout.md) | where everything lives in this repository |
-| [CHANGELOG.md](CHANGELOG.md) | every release; pin `@v0.24.3` or a SHA instead of `@v1` to stay on one |
+| [CHANGELOG.md](CHANGELOG.md) | every release; pin `@v0.24.4` or a SHA instead of `@v1` to stay on one |
 
 ## License
 

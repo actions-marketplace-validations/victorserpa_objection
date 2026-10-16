@@ -266,6 +266,73 @@ out=$(bash "$BRIEF" HEAD~1)
 hasnt "$out" "## Other uses of the names the diff changed"
 cd "$T" || exit 1
 
+# A line the diff adds to several functions of a family: the others
+# that lack it are listed, one that already has it and one outside the
+# family are not, and a line given to one function only makes no section.
+S="$T/same"
+git init -q "$S" && cd "$S" || exit 1
+printf '{"bases":["main"]}\n' >.objection.json
+for fn in agg_rows_one agg_rows_two agg_rows_three agg_rows_four other_thing; do
+  printf 'static void\n%s(int *buf)\n{\n' "$fn"
+  [ "$fn" = agg_rows_four ] && printf '  init_rows(buf, -2);\n'
+  for i in $(seq 1 25); do printf '  step(buf, %s);\n' "$i"; done
+  printf '}\n\n'
+done >agg.c
+git add . && gitc commit -q -m base && git update-ref refs/remotes/origin/main HEAD
+awk '{print} /^(agg_rows_one|agg_rows_two)\(int \*buf\)$/{getline; print; print "  init_rows(buf, -2);"}' agg.c >a.tmp && mv a.tmp agg.c
+git add . && gitc commit -q -m change
+out=$(bash "$BRIEF" origin/main)
+has "$out" "## A line the diff adds to several functions, and the functions like them without it"
+has "$out" '`init_rows(buf, -2);` is added to agg_rows_one, agg_rows_two. Without it:'
+grep -q '^agg.c:[0-9]*  agg_rows_three$' "$out" || { echo "FAIL: a sibling without the line was not listed"; failures=$((failures + 1)); }
+hasnt "$out" "agg_rows_four"
+hasnt "$out" "  other_thing"
+# A line in an indented method is not given to the function above the
+# class, and test functions are not a family.
+{ printf 'def load_row_one(x):\n    return x\n\n\nclass A:\n    def run(self):\n        pass\n\n\ndef load_row_two(x):\n    return x\n\n\nclass B:\n    def run(self):\n        pass\n\n\ndef load_row_three(x):\n    return x\n\n\ndef test_user_create():\n    pass\n\n\ndef test_user_delete():\n    pass\n\n\ndef test_user_list():\n    pass\n'; } >m.py
+git add . && gitc commit -q -m py
+sed -e 's/^        pass$/        self.setup_cache(42)\n        pass/' -e 's/^    pass$/    setup_db_fixture(1)\n    pass/' m.py >p.tmp && mv p.tmp m.py
+git add . && gitc commit -q -m pychange
+out=$(bash "$BRIEF" HEAD~1)
+hasnt "$out" "## A line the diff adds to several functions"
+# A Go label at column 0 is inside its function, and a return line is
+# not one to match.
+{ for fn in FooBarOpen FooBarRead FooBarClose; do printf 'func %s(ctx int) error {\n\tstep(ctx)\ncleanup:\n\tdone(ctx)\n\treturn nil\n}\n\n' "$fn"; done; } >g.go
+git add . && gitc commit -q -m go
+sed -e '/^func FooBarOpen/,/^}/s/^\tdone(ctx)$/\trelease(ctx, buffer)\n\tdone(ctx)/' -e '/^func FooBarRead/,/^}/s/^\tdone(ctx)$/\trelease(ctx, buffer)\n\tdone(ctx)/' g.go >g.tmp && mv g.tmp g.go
+git add . && gitc commit -q -m gochange
+out=$(bash "$BRIEF" HEAD~1)
+grep -q '^g.go:[0-9]*  FooBarClose$' "$out" || { echo "FAIL: a line after a Go label was not grouped"; failures=$((failures + 1)); }
+sed -e '/^func FooBarOpen/,/^}/s/^\treturn nil$/\treturn wrapErr(ctx, nil)/' -e '/^func FooBarRead/,/^}/s/^\treturn nil$/\treturn wrapErr(ctx, nil)/' g.go >g.tmp && mv g.tmp g.go
+git add . && gitc commit -q -m goreturn
+out=$(bash "$BRIEF" HEAD~1)
+hasnt "$out" "## A line the diff adds to several functions"
+printf 'pad\n' >>agg.c && git add . && gitc commit -q -m pad
+awk '{print} /^agg_rows_three\(int \*buf\)$/{getline; print; print "  init_rows(buf, -3);"}' agg.c >a.tmp && mv a.tmp agg.c
+git add . && gitc commit -q -m one
+out=$(bash "$BRIEF" HEAD~1)
+hasnt "$out" "## A line the diff adds to several functions"
+cd "$T" || exit 1
+
+# A line in a top-level "try:" block is not given to the def above it,
+# and the list of functions without the line is capped at 8.
+S2="$T/same2"
+git init -q "$S2" && cd "$S2" || exit 1
+printf '{"bases":["main"]}\n' >.objection.json
+{ for fn in sync_job_one sync_job_two sync_job_three; do printf 'def %s(x):\n    return x\n\n\ntry:\n    pass\nexcept Exception:\n    pass\n\n\n' "$fn"; done; } >t.py
+git add . && gitc commit -q -m base
+awk 'BEGIN{n=0} {print} /^try:$/{n++; if (n<=2) print "    register_hook(handler, 42)"}' t.py >t.tmp && mv t.tmp t.py
+git add . && gitc commit -q -m trychange
+out=$(bash "$BRIEF" HEAD~1)
+hasnt "$out" "## A line the diff adds to several functions"
+{ for k in $(seq 1 12); do printf 'static void\ncap_fam_f%s(int *b)\n{\n  step(b);\n}\n\n' "$k"; done; } >cap.c
+git add . && gitc commit -q -m cap
+awk '{print} /^cap_fam_f(1|2)\(int \*b\)$/{getline; print; print "  init_cache(b, 7);"}' cap.c >c.tmp && mv c.tmp cap.c
+git add . && gitc commit -q -m capchange
+out=$(bash "$BRIEF" HEAD~1)
+has "$out" "(and 2 more)"
+cd "$T" || exit 1
+
 # A file name with an accent still matches the invariant's paths.
 U="$T/utf"
 git init -q "$U" && cd "$U" || exit 1

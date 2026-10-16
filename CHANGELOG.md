@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.24.4 (2026-10-13)
+
+- The same-line section no longer treats a column-0 `try:`, `else:`,
+  `finally:`, `except:` or a C++ access label as a label inside a
+  function, so a line in a top-level Python block is not given to the
+  def above it; its 8-function cap is tested.
+- Measured and not shipped: an accuser role that asks to rate the
+  consequence, not the mechanism, did not raise the severity of the
+  catches objection under-rates (22 of 40 for both, same day), and
+  added no false alarm. Results in eval/results.
+- Eight more real bugs in the eval, in the languages the fresh fifteen
+  lacked (Python, Rust, TypeScript), measured before any change for
+  them: objection found 16 of 32 runs and the plain prompt 8, at the
+  right severity 9 against 4, hand-graded and confirmed blind (63 of 64
+  agree). objection under-rated most of what it found here.
+- The brief lists, when the diff adds the same line to several functions
+  of one family (names with the same leading words), the functions of
+  that family in the same file that do not have it. On a real
+  regression nobody had found (code_saturne-0bc2a3a, an initialization
+  moved into all but one of the aggregation functions), 4 of 4 runs
+  named the one left out, against 0 of 4. The section appears in 1 of
+  the 39 real bugs and none of the planted cases. That case is one of
+  the fresh fifteen, so it is now tuned on.
+- The fresh fifteen were graded a second time, blind, by another model
+  (Opus, the eight answers of a case shuffled and unlabelled): it agreed
+  with the hand count on 104 of 120 runs and put the gap at 36 against
+  23 (the hand count: 38 against 24). The defender, run on every catch
+  the scorer counted there, refuted none of 70 rows.
+
 ## 0.24.3 (2026-10-13)
 
 - Fifteen fresh real regressions in the eval (2026-07 to 2026-09, from
